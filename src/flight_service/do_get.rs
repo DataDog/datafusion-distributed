@@ -22,6 +22,7 @@ use bytes::Bytes;
 use datafusion::common::exec_datafusion_err;
 use datafusion::execution::SendableRecordBatchStream;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
+use datafusion::prelude::SessionContext;
 use futures::TryStreamExt;
 use futures::{Stream, stream};
 use prost::Message;
@@ -92,8 +93,9 @@ impl ArrowFlightEndpoint {
         let stage_data = once
             .get_or_try_init(|| async {
                 let stage_proto = doget.stage_proto;
-                let stage = stage_from_proto(stage_proto, &session_state, &self.runtime, &codec)
-                    .map_err(|err| {
+                let ctx = SessionContext::new_with_state(session_state.clone());
+                let stage =
+                    stage_from_proto(stage_proto, &ctx, &self.runtime, &codec).map_err(|err| {
                         Status::invalid_argument(format!("Cannot decode stage proto: {err}"))
                     })?;
 

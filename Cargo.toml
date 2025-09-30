@@ -2,8 +2,8 @@
 members = ["benchmarks"]
 
 [workspace.dependencies]
-datafusion = { version = "49.0.0", default-features = false }
-datafusion-proto = { version = "49.0.0" }
+datafusion = { version = "50.0.0", default-features = false }
+datafusion-proto = { version = "50.0.0" }
 
 [package]
 name = "datafusion-distributed"
@@ -64,3 +64,7 @@ parquet = "55.2.0"
 arrow = "55.2.0"
 tokio-stream = "0.1.17"
 hyper-util = "0.1.16"
+
+[patch.crates-io]
+datafusion = { git = "https://github.com/DataDog/datafusion", rev = "5506e698c41810525331e57766f73e865d86e2a9", package = "datafusion" }
+datafusion-proto = { git = "https://github.com/DataDog/datafusion", rev = "5506e698c41810525331e57766f73e865d86e2a9", package = "datafusion-proto" }
