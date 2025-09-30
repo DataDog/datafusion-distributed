@@ -5,6 +5,7 @@ mod tests {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::arrow::record_batch::RecordBatch;
     use datafusion::arrow::util::pretty::pretty_format_batches;
+    use datafusion::common::runtime::SpawnedTask;
     use datafusion::error::DataFusionError;
     use datafusion::execution::{
         FunctionRegistry, SendableRecordBatchStream, SessionState, SessionStateBuilder, TaskContext,
@@ -29,14 +30,24 @@ mod tests {
     use datafusion_distributed::{DistributedPhysicalOptimizerRule, NetworkShuffleExec};
     use datafusion_proto::physical_plan::PhysicalExtensionCodec;
     use datafusion_proto::protobuf::proto_error;
-    use futures::{TryStreamExt, stream};
+    use futures::TryStreamExt;
     use prost::Message;
     use std::any::Any;
     use std::fmt::Formatter;
-    use std::sync::Arc;
+    use std::sync::{Arc, RwLock};
+    use std::time::Duration;
+    use tokio::sync::mpsc;
+    use tokio_stream::StreamExt;
+    use tokio_stream::wrappers::ReceiverStream;
 
+    // This test proves that execution nodes do not get early dropped in the ArrowFlightEndpoint
+    // when all the partitions start being consumed.
+    //
+    // It uses a StatefulInt64ListExec custom node whose execution depends on it not being dropped.
+    // If for some reason ArrowFlightEndpoint drops the node before the stream ends, this test
+    // will fail.
     #[tokio::test]
-    async fn custom_extension_codec() -> Result<(), Box<dyn std::error::Error>> {
+    async fn stateful_execution_plan() -> Result<(), Box<dyn std::error::Error>> {
         async fn build_state(
             ctx: DistributedSessionBuilderContext,
         ) -> Result<SessionState, DataFusionError> {
@@ -49,14 +60,7 @@ mod tests {
 
         let (ctx, _guard) = start_localhost_context(3, build_state).await;
 
-        let single_node_plan = build_plan(false)?;
-        assert_snapshot!(displayable(single_node_plan.as_ref()).indent(true).to_string(), @r"
-        SortExec: expr=[numbers@0 DESC NULLS LAST], preserve_partitioning=[false]
-          FilterExec: numbers@0 > 1
-            Int64ListExec: length=6
-        ");
-
-        let distributed_plan = build_plan(true)?;
+        let distributed_plan = build_plan()?;
         let distributed_plan = DistributedPhysicalOptimizerRule::distribute_plan(distributed_plan)?;
 
         assert_snapshot!(displayable(&distributed_plan).indent(true).to_string(), @r"
@@ -73,23 +77,8 @@ mod tests {
             ┌───── Stage 1   Tasks: t0:[p0,p1,p2,p3,p4,p5,p6,p7,p8,p9] 
             │ RepartitionExec: partitioning=Hash([numbers@0], 10), input_partitions=1
             │   FilterExec: numbers@0 > 1
-            │     Int64ListExec: length=6
+            │     StatefulInt64ListExec: length=6
             └──────────────────────────────────────────────────
-        ");
-
-        let stream = execute_stream(single_node_plan, ctx.task_ctx())?;
-        let batches_single_node = stream.try_collect::<Vec<_>>().await?;
-
-        assert_snapshot!(pretty_format_batches(&batches_single_node).unwrap(), @r"
-        +---------+
-        | numbers |
-        +---------+
-        | 6       |
-        | 5       |
-        | 4       |
-        | 3       |
-        | 2       |
-        +---------+
         ");
 
         let stream = execute_stream(Arc::new(distributed_plan), ctx.task_ctx())?;
@@ -109,12 +98,11 @@ mod tests {
         Ok(())
     }
 
-    fn build_plan(distributed: bool) -> Result<Arc<dyn ExecutionPlan>, DataFusionError> {
-        let mut plan: Arc<dyn ExecutionPlan> = Arc::new(Int64ListExec::new(vec![1, 2, 3, 4, 5, 6]));
+    fn build_plan() -> Result<Arc<dyn ExecutionPlan>, DataFusionError> {
+        let mut plan: Arc<dyn ExecutionPlan> =
+            Arc::new(StatefulInt64ListExec::new(vec![1, 2, 3, 4, 5, 6]));
 
-        if distributed {
-            plan = Arc::new(PartitionIsolatorExec::new_pending(plan));
-        }
+        plan = Arc::new(PartitionIsolatorExec::new_pending(plan));
 
         plan = Arc::new(FilterExec::try_new(
             Arc::new(BinaryExpr::new(
@@ -125,13 +113,11 @@ mod tests {
             plan,
         )?);
 
-        if distributed {
-            plan = Arc::new(NetworkShuffleExec::try_new(
-                Arc::clone(&plan),
-                Partitioning::Hash(vec![col("numbers", &plan.schema())?], 1),
-                10,
-            )?);
-        }
+        plan = Arc::new(NetworkShuffleExec::try_new(
+            Arc::clone(&plan),
+            Partitioning::Hash(vec![col("numbers", &plan.schema())?], 1),
+            10,
+        )?);
 
         plan = Arc::new(SortExec::new(
             LexOrdering::new(vec![PhysicalSortExpr::new(
@@ -142,40 +128,42 @@ mod tests {
             plan,
         ));
 
-        if distributed {
-            plan = Arc::new(NetworkShuffleExec::try_new(
-                plan,
-                Partitioning::RoundRobinBatch(10),
-                10,
-            )?);
+        plan = Arc::new(NetworkShuffleExec::try_new(
+            plan,
+            Partitioning::RoundRobinBatch(10),
+            10,
+        )?);
 
-            plan = Arc::new(RepartitionExec::try_new(
-                plan,
-                Partitioning::RoundRobinBatch(1),
-            )?);
+        plan = Arc::new(RepartitionExec::try_new(
+            plan,
+            Partitioning::RoundRobinBatch(1),
+        )?);
 
-            plan = Arc::new(SortExec::new(
-                LexOrdering::new(vec![PhysicalSortExpr::new(
-                    col("numbers", &plan.schema())?,
-                    SortOptions::new(true, false),
-                )])
-                .unwrap(),
-                plan,
-            ));
-        }
+        plan = Arc::new(SortExec::new(
+            LexOrdering::new(vec![PhysicalSortExpr::new(
+                col("numbers", &plan.schema())?,
+                SortOptions::new(true, false),
+            )])
+            .unwrap(),
+            plan,
+        ));
 
         Ok(plan)
     }
 
     #[derive(Debug)]
-    pub struct Int64ListExec {
+    pub struct StatefulInt64ListExec {
         plan_properties: PlanProperties,
         numbers: Vec<i64>,
+        task: RwLock<Option<SpawnedTask<()>>>,
+        tx: RwLock<Option<mpsc::Sender<i64>>>,
+        rx: RwLock<Option<mpsc::Receiver<i64>>>,
     }
 
-    impl Int64ListExec {
+    impl StatefulInt64ListExec {
         fn new(numbers: Vec<i64>) -> Self {
             let schema = Schema::new(vec![Field::new("numbers", DataType::Int64, false)]);
+            let (tx, rx) = mpsc::channel(10);
             Self {
                 numbers,
                 plan_properties: PlanProperties::new(
@@ -184,19 +172,22 @@ mod tests {
                     EmissionType::Incremental,
                     Boundedness::Bounded,
                 ),
+                task: RwLock::new(None),
+                tx: RwLock::new(Some(tx)),
+                rx: RwLock::new(Some(rx)),
             }
         }
     }
 
-    impl DisplayAs for Int64ListExec {
+    impl DisplayAs for StatefulInt64ListExec {
         fn fmt_as(&self, _: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-            write!(f, "Int64ListExec: length={:?}", self.numbers.len())
+            write!(f, "StatefulInt64ListExec: length={:?}", self.numbers.len())
         }
     }
 
-    impl ExecutionPlan for Int64ListExec {
+    impl ExecutionPlan for StatefulInt64ListExec {
         fn name(&self) -> &str {
-            "Int64ListExec"
+            "StatefulInt64ListExec"
         }
 
         fn as_any(&self) -> &dyn Any {
@@ -223,12 +214,29 @@ mod tests {
             _: usize,
             _: Arc<TaskContext>,
         ) -> datafusion::common::Result<SendableRecordBatchStream> {
-            let array = Int64Array::from(self.numbers.clone());
-            let batch = RecordBatch::try_new(self.schema(), vec![Arc::new(array)])?;
+            if let Some(tx) = self.tx.write().unwrap().take() {
+                let numbers = self.numbers.clone();
+                self.task
+                    .write()
+                    .unwrap()
+                    .replace(SpawnedTask::spawn(async move {
+                        for n in numbers {
+                            tx.send(n).await.unwrap();
+                            tokio::time::sleep(Duration::from_millis(100)).await;
+                        }
+                    }));
+            }
 
-            let stream = stream::iter(vec![Ok(batch)]);
+            let rx = self.rx.write().unwrap().take().unwrap();
+            let schema = self.schema();
+
+            let stream = ReceiverStream::new(rx).map(move |v| {
+                RecordBatch::try_new(schema.clone(), vec![Arc::new(Int64Array::from(vec![v]))])
+                    .map_err(DataFusionError::from)
+            });
+
             Ok(Box::pin(RecordBatchStreamAdapter::new(
-                self.schema(),
+                self.schema().clone(),
                 stream,
             )))
         }
@@ -252,7 +260,7 @@ mod tests {
         ) -> datafusion::common::Result<Arc<dyn ExecutionPlan>> {
             let node =
                 Int64ListExecProto::decode(buf).map_err(|err| proto_error(format!("{err}")))?;
-            Ok(Arc::new(Int64ListExec::new(node.numbers.clone())))
+            Ok(Arc::new(StatefulInt64ListExec::new(node.numbers.clone())))
         }
 
         fn try_encode(
@@ -260,7 +268,7 @@ mod tests {
             node: Arc<dyn ExecutionPlan>,
             buf: &mut Vec<u8>,
         ) -> datafusion::common::Result<()> {
-            let Some(plan) = node.as_any().downcast_ref::<Int64ListExec>() else {
+            let Some(plan) = node.as_any().downcast_ref::<StatefulInt64ListExec>() else {
                 return Err(proto_error(format!(
                     "Expected plan to be of type Int64ListExec, but was {}",
                     node.name()

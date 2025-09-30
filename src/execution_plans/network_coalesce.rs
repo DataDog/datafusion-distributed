@@ -1,23 +1,21 @@
+use crate::ChannelResolver;
 use crate::channel_resolver_ext::get_distributed_channel_resolver;
 use crate::common::scale_partitioning_props;
 use crate::config_extension_ext::ContextGrpcMetadata;
-use crate::distributed_physical_optimizer_rule::{limit_tasks_err, NetworkBoundary};
-use crate::errors::{map_flight_to_datafusion_error, map_status_to_datafusion_error};
+use crate::distributed_physical_optimizer_rule::{NetworkBoundary, limit_tasks_err};
 use crate::execution_plans::{DistributedTaskContext, StageExec};
 use crate::flight_service::DoGet;
 use crate::metrics::proto::MetricsSetProto;
-use crate::protobuf::{proto_from_stage, DistributedCodec, StageKey};
-use crate::ChannelResolver;
+use crate::protobuf::{DistributedCodec, StageKey, proto_from_input_stage};
+use crate::protobuf::{map_flight_to_datafusion_error, map_status_to_datafusion_error};
+use arrow_flight::Ticket;
 use arrow_flight::decode::FlightRecordBatchStream;
 use arrow_flight::error::FlightError;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::Ticket;
 use dashmap::DashMap;
 use datafusion::common::{exec_err, internal_datafusion_err, internal_err, plan_err};
 use datafusion::error::DataFusionError;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
-use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
-use datafusion::physical_plan::sorts::sort_preserving_merge::SortPreservingMergeExec;
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::{TryFutureExt, TryStreamExt};
@@ -26,8 +24,8 @@ use prost::Message;
 use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
-use tonic::metadata::MetadataMap;
 use tonic::Request;
+use tonic::metadata::MetadataMap;
 
 /// [ExecutionPlan] that coalesces partitions from multiple tasks into a single task without
 /// performing any repartition, and maintaining the same partitioning scheme.
@@ -101,21 +99,9 @@ pub struct NetworkCoalesceReady {
 }
 
 impl NetworkCoalesceExec {
-    pub fn from_coalesce_partitions_exec(
-        input: &CoalescePartitionsExec,
-        input_tasks: usize,
-    ) -> Result<Self, DataFusionError> {
-        Self::from_input(input, input_tasks)
-    }
-
-    pub fn from_sort_preserving_merge_exec(
-        input: &SortPreservingMergeExec,
-        input_tasks: usize,
-    ) -> Result<Self, DataFusionError> {
-        Self::from_input(input, input_tasks)
-    }
-
-    pub fn from_input(
+    /// Creates a new [NetworkCoalesceExec] node from a [CoalescePartitionsExec] and
+    /// [SortPreservingMergeExec].
+    pub fn from_input_exec(
         input: &dyn ExecutionPlan,
         input_tasks: usize,
     ) -> Result<Self, DataFusionError> {
@@ -137,7 +123,7 @@ impl NetworkBoundary for NetworkCoalesceExec {
         &self,
         n_tasks: usize,
     ) -> Result<(Arc<dyn ExecutionPlan>, usize), DataFusionError> {
-        let Self::Pending(ref pending) = self else {
+        let Self::Pending(pending) = self else {
             return plan_err!("can only return wrapped child if on Pending state");
         };
 
@@ -249,12 +235,11 @@ impl ExecutionPlan for NetworkCoalesceExec {
         // the `NetworkCoalesceExec` node can only be executed in the context of a `StageExec`
         let stage = StageExec::from_ctx(&context)?;
 
-        // of our child stages find the one that matches the one we are supposed to be
-        // reading from
-        let child_stage = stage.child_stage(self_ready.stage_num)?;
+        // of our input stages find the one that we are supposed to be reading from
+        let input_stage = stage.input_stage(self_ready.stage_num)?;
 
         let codec = DistributedCodec::new_combined_with_user(context.session_config());
-        let child_stage_proto = proto_from_stage(child_stage, &codec).map_err(|e| {
+        let input_stage_proto = proto_from_input_stage(input_stage, &codec).map_err(|e| {
             internal_datafusion_err!("NetworkCoalesceExec: failed to convert stage to proto: {e}")
         })?;
 
@@ -265,7 +250,7 @@ impl ExecutionPlan for NetworkCoalesceExec {
         }
 
         let partitions_per_task =
-            self.properties().partitioning.partition_count() / child_stage.tasks.len();
+            self.properties().partitioning.partition_count() / input_stage.tasks().len();
 
         let target_task = partition / partitions_per_task;
         let target_partition = partition % partitions_per_task;
@@ -275,11 +260,11 @@ impl ExecutionPlan for NetworkCoalesceExec {
             Extensions::default(),
             Ticket {
                 ticket: DoGet {
-                    stage_proto: Some(child_stage_proto.clone()),
+                    stage_proto: input_stage_proto,
                     target_partition: target_partition as u64,
                     stage_key: Some(StageKey {
                         query_id: stage.query_id.to_string(),
-                        stage_id: child_stage.num as u64,
+                        stage_id: input_stage.num() as u64,
                         task_number: target_task as u64,
                     }),
                     target_task_index: target_task as u64,
@@ -289,7 +274,7 @@ impl ExecutionPlan for NetworkCoalesceExec {
             },
         );
 
-        let Some(task) = child_stage.tasks.get(target_task) else {
+        let Some(task) = input_stage.tasks().get(target_task) else {
             return internal_err!("ProgrammingError: Task {target_task} not found");
         };
 

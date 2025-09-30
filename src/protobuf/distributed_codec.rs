@@ -1,4 +1,4 @@
-use super::get_distributed_user_codec;
+use super::get_distributed_user_codecs;
 use crate::common::ComposedPhysicalExtensionCodec;
 use crate::execution_plans::{NetworkCoalesceExec, NetworkCoalesceReady, NetworkShuffleReadyExec};
 use crate::{NetworkShuffleExec, PartitionIsolatorExec};
@@ -9,9 +9,9 @@ use datafusion::physical_expr::EquivalenceProperties;
 use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::{ExecutionPlan, Partitioning, PlanProperties};
 use datafusion::prelude::SessionConfig;
+use datafusion_proto::physical_plan::PhysicalExtensionCodec;
 use datafusion_proto::physical_plan::from_proto::parse_protobuf_partitioning;
 use datafusion_proto::physical_plan::to_proto::serialize_partitioning;
-use datafusion_proto::physical_plan::PhysicalExtensionCodec;
 use datafusion_proto::protobuf;
 use datafusion_proto::protobuf::proto_error;
 use prost::Message;
@@ -23,13 +23,10 @@ use std::sync::Arc;
 pub struct DistributedCodec;
 
 impl DistributedCodec {
-    pub fn new_combined_with_user(cfg: &SessionConfig) -> impl PhysicalExtensionCodec {
-        let mut combined_codec = ComposedPhysicalExtensionCodec::default();
-        combined_codec.push(DistributedCodec {});
-        if let Some(ref user_codec) = get_distributed_user_codec(cfg) {
-            combined_codec.push_arc(Arc::clone(user_codec));
-        }
-        combined_codec
+    pub fn new_combined_with_user(cfg: &SessionConfig) -> impl PhysicalExtensionCodec + use<> {
+        let mut codecs: Vec<Arc<dyn PhysicalExtensionCodec>> = vec![Arc::new(DistributedCodec {})];
+        codecs.extend(get_distributed_user_codecs(cfg));
+        ComposedPhysicalExtensionCodec::new(codecs)
     }
 }
 
@@ -279,8 +276,8 @@ mod tests {
     use datafusion::physical_expr::LexOrdering;
     use datafusion::{
         execution::registry::MemoryFunctionRegistry,
-        physical_expr::{expressions::col, expressions::Column, Partitioning, PhysicalSortExpr},
-        physical_plan::{displayable, sorts::sort::SortExec, union::UnionExec, ExecutionPlan},
+        physical_expr::{Partitioning, PhysicalSortExpr, expressions::Column, expressions::col},
+        physical_plan::{ExecutionPlan, displayable, sorts::sort::SortExec, union::UnionExec},
     };
 
     fn schema_i32(name: &str) -> Arc<Schema> {

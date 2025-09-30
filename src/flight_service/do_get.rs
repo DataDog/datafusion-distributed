@@ -1,26 +1,30 @@
+use crate::common::with_callback;
 use crate::config_extension_ext::ContextGrpcMetadata;
-use crate::errors::datafusion_error_to_tonic_status;
 use crate::execution_plans::{DistributedTaskContext, StageExec};
 use crate::flight_service::service::ArrowFlightEndpoint;
 use crate::flight_service::session_builder::DistributedSessionBuilderContext;
-use crate::protobuf::{stage_from_proto, DistributedCodec, StageExecProto, StageKey};
+use crate::protobuf::{
+    DistributedCodec, StageKey, datafusion_error_to_tonic_status, stage_from_proto,
+};
+use arrow_flight::Ticket;
 use arrow_flight::encode::FlightDataEncoderBuilder;
 use arrow_flight::error::FlightError;
 use arrow_flight::flight_service_server::FlightService;
-use arrow_flight::Ticket;
+use bytes::Bytes;
 use datafusion::common::exec_datafusion_err;
 use datafusion::execution::SendableRecordBatchStream;
+use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use futures::TryStreamExt;
 use prost::Message;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tonic::{Request, Response, Status};
 
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DoGet {
-    /// The ExecutionStage that we are going to execute
-    #[prost(message, optional, tag = "1")]
-    pub stage_proto: Option<StageExecProto>,
+    /// The [StageExec] we are going to execute encoded as protobuf bytes.
+    #[prost(bytes, tag = "1")]
+    pub stage_proto: Bytes,
     /// The index to the task within the stage that we want to execute
     #[prost(uint64, tag = "2")]
     pub target_task_index: u64,
@@ -78,7 +82,7 @@ impl ArrowFlightEndpoint {
 
         let stage_data = once
             .get_or_try_init(|| async {
-                let stage_proto = doget.stage_proto.ok_or_else(missing("stage_proto"))?;
+                let stage_proto = doget.stage_proto;
                 let stage = stage_from_proto(stage_proto, &session_state, &self.runtime, &codec)
                     .map_err(|err| {
                         Status::invalid_argument(format!("Cannot decode stage proto: {err}"))
@@ -125,7 +129,17 @@ impl ArrowFlightEndpoint {
             .execute(doget.target_partition as usize, session_state.task_ctx())
             .map_err(|err| Status::internal(format!("Error executing stage plan: {err:#?}")))?;
 
-        Ok(record_batch_stream_to_response(stream))
+        let schema = stream.schema();
+        let stream = with_callback(stream, move |_| {
+            // We need to hold a reference to the plan for at least as long as the stream is
+            // execution. Some plans might store state necessary for the stream to work, and
+            // dropping the plan early could drop this state too soon.
+            let _ = stage.plan;
+        });
+
+        Ok(record_batch_stream_to_response(Box::pin(
+            RecordBatchStreamAdapter::new(schema, stream),
+        )))
     }
 }
 
@@ -152,17 +166,17 @@ fn record_batch_stream_to_response(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ExecutionTask;
     use crate::flight_service::session_builder::DefaultSessionBuilder;
     use crate::protobuf::proto_from_stage;
-    use crate::ExecutionTask;
     use arrow::datatypes::{Schema, SchemaRef};
     use arrow_flight::Ticket;
     use datafusion::physical_expr::Partitioning;
+    use datafusion::physical_plan::ExecutionPlan;
     use datafusion::physical_plan::empty::EmptyExec;
     use datafusion::physical_plan::repartition::RepartitionExec;
-    use datafusion::physical_plan::ExecutionPlan;
     use datafusion_proto::physical_plan::DefaultPhysicalExtensionCodec;
-    use prost::{bytes::Bytes, Message};
+    use prost::{Message, bytes::Bytes};
     use tonic::Request;
     use uuid::Uuid;
 
@@ -218,7 +232,7 @@ mod tests {
             let stage_proto = stage_proto_for_closure.clone();
             // Create DoGet message
             let doget = DoGet {
-                stage_proto: Some(stage_proto),
+                stage_proto: stage_proto.encode_to_vec().into(),
                 target_task_index: task_number,
                 target_partition: partition,
                 stage_key: Some(stage_key),

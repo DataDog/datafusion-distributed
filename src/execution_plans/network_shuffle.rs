@@ -1,17 +1,17 @@
+use crate::ChannelResolver;
 use crate::channel_resolver_ext::get_distributed_channel_resolver;
 use crate::common::scale_partitioning;
 use crate::config_extension_ext::ContextGrpcMetadata;
 use crate::distributed_physical_optimizer_rule::NetworkBoundary;
-use crate::errors::{map_flight_to_datafusion_error, map_status_to_datafusion_error};
 use crate::execution_plans::{DistributedTaskContext, StageExec};
 use crate::flight_service::DoGet;
 use crate::metrics::proto::MetricsSetProto;
-use crate::protobuf::{proto_from_stage, DistributedCodec, StageKey};
-use crate::ChannelResolver;
+use crate::protobuf::{DistributedCodec, StageKey, proto_from_input_stage};
+use crate::protobuf::{map_flight_to_datafusion_error, map_status_to_datafusion_error};
+use arrow_flight::Ticket;
 use arrow_flight::decode::FlightRecordBatchStream;
 use arrow_flight::error::FlightError;
 use arrow_flight::flight_service_client::FlightServiceClient;
-use arrow_flight::Ticket;
 use dashmap::DashMap;
 use datafusion::common::{exec_err, internal_datafusion_err, internal_err, plan_err};
 use datafusion::error::DataFusionError;
@@ -28,8 +28,8 @@ use prost::Message;
 use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
-use tonic::metadata::MetadataMap;
 use tonic::Request;
+use tonic::metadata::MetadataMap;
 
 /// [ExecutionPlan] implementation that shuffles data across the network in a distributed context.
 ///
@@ -178,7 +178,7 @@ impl NetworkBoundary for NetworkShuffleExec {
         &self,
         n_tasks: usize,
     ) -> Result<(Arc<dyn ExecutionPlan>, usize), DataFusionError> {
-        let Self::Pending(ref pending) = self else {
+        let Self::Pending(pending) = self else {
             return plan_err!("cannot only return wrapped child if on Pending state");
         };
 
@@ -293,22 +293,22 @@ impl ExecutionPlan for NetworkShuffleExec {
 
         // of our child stages find the one that matches the one we are supposed to be
         // reading from
-        let child_stage = stage.child_stage(self_ready.stage_num)?;
+        let input_stage = stage.input_stage(self_ready.stage_num)?;
 
         let codec = DistributedCodec::new_combined_with_user(context.session_config());
-        let child_stage_proto = proto_from_stage(child_stage, &codec).map_err(|e| {
+        let input_stage_proto = proto_from_input_stage(input_stage, &codec).map_err(|e| {
             internal_datafusion_err!("NetworkShuffleExec: failed to convert stage to proto: {e}")
         })?;
 
-        let child_stage_tasks = child_stage.tasks.clone();
-        let child_stage_num = child_stage.num as u64;
+        let input_stage_tasks = input_stage.tasks().to_vec();
+        let input_stage_num = input_stage.num() as u64;
         let query_id = stage.query_id.to_string();
 
         let context_headers = ContextGrpcMetadata::headers_from_ctx(&context);
         let task_context = DistributedTaskContext::from_ctx(&context);
         let off = self_ready.properties.partitioning.partition_count() * task_context.task_index;
 
-        let stream = child_stage_tasks.into_iter().enumerate().map(|(i, task)| {
+        let stream = input_stage_tasks.into_iter().enumerate().map(|(i, task)| {
             let channel_resolver = Arc::clone(&channel_resolver);
 
             let ticket = Request::from_parts(
@@ -316,11 +316,11 @@ impl ExecutionPlan for NetworkShuffleExec {
                 Extensions::default(),
                 Ticket {
                     ticket: DoGet {
-                        stage_proto: Some(child_stage_proto.clone()),
+                        stage_proto: input_stage_proto.clone(),
                         target_partition: (off + partition) as u64,
                         stage_key: Some(StageKey {
                             query_id: query_id.clone(),
-                            stage_id: child_stage_num,
+                            stage_id: input_stage_num,
                             task_number: i as u64,
                         }),
                         target_task_index: i as u64,
