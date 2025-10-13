@@ -51,6 +51,8 @@ pub enum ArrowErrorInnerProto {
     DictionaryKeyOverflowError(bool),
     #[prost(bool, tag = "19")]
     RunEndIndexOverflowError(bool),
+    #[prost(uint64, tag = "20")]
+    OffsetOverflowError(u64),
 }
 
 impl ArrowErrorProto {
@@ -130,6 +132,10 @@ impl ArrowErrorProto {
                 inner: Some(ArrowErrorInnerProto::RunEndIndexOverflowError(true)),
                 ctx: ctx.cloned(),
             },
+            ArrowError::OffsetOverflowError(offset) => ArrowErrorProto {
+                inner: Some(ArrowErrorInnerProto::OffsetOverflowError(*offset as u64)),
+                ctx: ctx.cloned(),
+            },
         }
     }
 
@@ -176,6 +182,9 @@ impl ArrowErrorProto {
             ArrowErrorInnerProto::RunEndIndexOverflowError(_) => {
                 ArrowError::RunEndIndexOverflowError
             }
+            ArrowErrorInnerProto::OffsetOverflowError(offset) => {
+                ArrowError::OffsetOverflowError(*offset as usize)
+            }
         };
         (err, self.ctx.clone())
     }
@@ -214,6 +223,7 @@ mod tests {
             ArrowError::CDataInterface("cdata error".to_string()),
             ArrowError::DictionaryKeyOverflowError,
             ArrowError::RunEndIndexOverflowError,
+            ArrowError::OffsetOverflowError(12345),
         ];
 
         for original_error in test_cases {
