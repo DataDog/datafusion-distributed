@@ -1,19 +1,21 @@
-use crate::ChannelResolver;
 use crate::channel_resolver_ext::get_distributed_channel_resolver;
-use crate::common::scale_partitioning;
 use crate::config_extension_ext::ContextGrpcMetadata;
-use crate::distributed_physical_optimizer_rule::NetworkBoundary;
-use crate::execution_plans::{DistributedTaskContext, StageExec};
+use crate::distributed_physical_optimizer_rule::{InputStageInfo, NetworkBoundary};
+use crate::execution_plans::common::{require_one_child, scale_partitioning};
 use crate::flight_service::DoGet;
+use crate::metrics::MetricsCollectingStream;
 use crate::metrics::proto::MetricsSetProto;
-use crate::protobuf::{DistributedCodec, StageKey, proto_from_input_stage};
+use crate::protobuf::StageKey;
 use crate::protobuf::{map_flight_to_datafusion_error, map_status_to_datafusion_error};
+use crate::stage::{MaybeEncodedPlan, Stage};
+use crate::{ChannelResolver, DistributedTaskContext};
 use arrow_flight::Ticket;
 use arrow_flight::decode::FlightRecordBatchStream;
 use arrow_flight::error::FlightError;
-use arrow_flight::flight_service_client::FlightServiceClient;
+use bytes::Bytes;
 use dashmap::DashMap;
-use datafusion::common::{exec_err, internal_datafusion_err, internal_err, plan_err};
+use datafusion::common::{exec_err, internal_datafusion_err, plan_err};
+use datafusion::datasource::schema_adapter::DefaultSchemaAdapterFactory;
 use datafusion::error::DataFusionError;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr::Partitioning;
@@ -110,7 +112,7 @@ use tonic::metadata::MetadataMap;
 /// This node has two variants.
 /// 1. Pending: it acts as a placeholder for the distributed optimization step to mark it as ready.
 /// 2. Ready: runs within a distributed stage and queries the next input stage over the network
-///     using Arrow Flight.
+///    using Arrow Flight.
 #[derive(Debug, Clone)]
 pub enum NetworkShuffleExec {
     Pending(NetworkShufflePendingExec),
@@ -122,7 +124,7 @@ pub enum NetworkShuffleExec {
 /// [NetworkShuffleReadyExec] node.
 #[derive(Debug, Clone)]
 pub struct NetworkShufflePendingExec {
-    repartition_exec: Arc<dyn ExecutionPlan>,
+    input: Arc<dyn ExecutionPlan>,
     input_tasks: usize,
 }
 
@@ -134,7 +136,7 @@ pub struct NetworkShufflePendingExec {
 pub struct NetworkShuffleReadyExec {
     /// the properties we advertise for this execution plan
     pub(crate) properties: PlanProperties,
-    pub(crate) stage_num: usize,
+    pub(crate) input_stage: Stage,
     /// metrics_collection is used to collect metrics from child tasks. It is empty when an
     /// is instantiated (deserialized, created via [NetworkShuffleExec::new_ready] etc...).
     /// Metrics are populated in this map via [NetworkShuffleExec::execute].
@@ -147,94 +149,103 @@ pub struct NetworkShuffleReadyExec {
 }
 
 impl NetworkShuffleExec {
+    /// Builds a new [NetworkShuffleExec] in "Pending" state.
+    ///
+    /// Typically, the `input` to this
+    /// node is a [RepartitionExec] with a [Partitioning::Hash] partition scheme.
     pub fn try_new(
         input: Arc<dyn ExecutionPlan>,
-        partitioning: Partitioning,
         input_tasks: usize,
     ) -> Result<Self, DataFusionError> {
+        if !matches!(input.output_partitioning(), Partitioning::Hash(_, _)) {
+            return plan_err!("NetworkShuffleExec input must be hash partitioned");
+        }
         Ok(Self::Pending(NetworkShufflePendingExec {
-            repartition_exec: Arc::new(RepartitionExec::try_new(input, partitioning)?),
-            input_tasks,
-        }))
-    }
-
-    pub fn from_repartition_exec(
-        r_exe: &Arc<dyn ExecutionPlan>,
-        input_tasks: usize,
-    ) -> Result<Self, DataFusionError> {
-        if !r_exe.as_any().is::<RepartitionExec>() {
-            return plan_err!("Expected RepartitionExec");
-        };
-
-        Ok(Self::Pending(NetworkShufflePendingExec {
-            repartition_exec: Arc::clone(r_exe),
+            input,
             input_tasks,
         }))
     }
 }
 
 impl NetworkBoundary for NetworkShuffleExec {
-    fn to_stage_info(
-        &self,
-        n_tasks: usize,
-    ) -> Result<(Arc<dyn ExecutionPlan>, usize), DataFusionError> {
+    fn get_input_stage_info(&self, n_tasks: usize) -> Result<InputStageInfo, DataFusionError> {
         let Self::Pending(pending) = self else {
             return plan_err!("cannot only return wrapped child if on Pending state");
         };
 
-        let children = pending.repartition_exec.children();
-        let Some(child) = children.first() else {
-            return plan_err!("RepartitionExec must have a child");
+        // TODO: Avoid downcasting once https://github.com/apache/datafusion/pull/17990 is shipped.
+        let Some(r_exe) = pending.input.as_any().downcast_ref::<RepartitionExec>() else {
+            return plan_err!("NetworkShuffleExec.input must always be RepartitionExec");
         };
 
         let next_stage_plan = Arc::new(RepartitionExec::try_new(
-            Arc::clone(child),
-            scale_partitioning(pending.repartition_exec.output_partitioning(), |p| {
-                p * n_tasks
-            }),
+            require_one_child(r_exe.children())?,
+            scale_partitioning(r_exe.partitioning(), |p| p * n_tasks),
         )?);
 
-        Ok((next_stage_plan, pending.input_tasks))
-    }
-
-    fn with_input_tasks(&self, input_tasks: usize) -> Arc<dyn NetworkBoundary> {
-        Arc::new(match self {
-            NetworkShuffleExec::Pending(prev) => {
-                NetworkShuffleExec::Pending(NetworkShufflePendingExec {
-                    repartition_exec: Arc::clone(&prev.repartition_exec),
-                    input_tasks,
-                })
-            }
-            NetworkShuffleExec::Ready(prev) => NetworkShuffleExec::Ready(NetworkShuffleReadyExec {
-                properties: prev.properties.clone(),
-                stage_num: prev.stage_num,
-                metrics_collection: Arc::clone(&prev.metrics_collection),
-            }),
+        Ok(InputStageInfo {
+            plan: next_stage_plan,
+            task_count: pending.input_tasks,
         })
     }
 
-    fn to_distributed(
+    fn with_input_task_count(
         &self,
-        stage_num: usize,
-        _stage_head: &Arc<dyn ExecutionPlan>,
+        input_tasks: usize,
+    ) -> Result<Arc<dyn NetworkBoundary>, DataFusionError> {
+        Ok(Arc::new(match self {
+            Self::Pending(prev) => Self::Pending(NetworkShufflePendingExec {
+                input: Arc::clone(&prev.input),
+                input_tasks,
+            }),
+            Self::Ready(_) => plan_err!(
+                "NetworkShuffleExec can only re-assign input tasks if in 'Pending' state"
+            )?,
+        }))
+    }
+
+    fn with_input_stage(
+        &self,
+        input_stage: Stage,
     ) -> Result<Arc<dyn ExecutionPlan>, DataFusionError> {
-        let NetworkShuffleExec::Pending(pending) = self else {
-            return internal_err!("NetworkShuffleExec is already distributed");
-        };
+        match self {
+            Self::Pending(pending) => {
+                let ready = NetworkShuffleReadyExec {
+                    properties: pending.input.properties().clone(),
+                    input_stage,
+                    metrics_collection: Default::default(),
+                };
+                Ok(Arc::new(Self::Ready(ready)))
+            }
+            Self::Ready(ready) => {
+                let mut ready = ready.clone();
+                ready.input_stage = input_stage;
+                Ok(Arc::new(Self::Ready(ready)))
+            }
+        }
+    }
 
-        let ready = NetworkShuffleReadyExec {
-            properties: pending.repartition_exec.properties().clone(),
-            stage_num,
-            metrics_collection: Default::default(),
-        };
-
-        Ok(Arc::new(Self::Ready(ready)))
+    fn input_stage(&self) -> Option<&Stage> {
+        match self {
+            Self::Pending(_) => None,
+            Self::Ready(v) => Some(&v.input_stage),
+        }
     }
 }
 
 impl DisplayAs for NetworkShuffleExec {
     fn fmt_as(&self, _t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
-        write!(f, "NetworkShuffleExec")
+        let Self::Ready(self_ready) = self else {
+            return write!(f, "NetworkShuffleExec: Pending");
+        };
+
+        let input_tasks = self_ready.input_stage.tasks.len();
+        let partitions = self_ready.properties.partitioning.partition_count();
+        let stage = self_ready.input_stage.num;
+        write!(
+            f,
+            "[Stage {stage}] => NetworkShuffleExec: output_partitions={partitions}, input_tasks={input_tasks}",
+        )
     }
 }
 
@@ -249,15 +260,18 @@ impl ExecutionPlan for NetworkShuffleExec {
 
     fn properties(&self) -> &PlanProperties {
         match self {
-            NetworkShuffleExec::Pending(v) => v.repartition_exec.properties(),
+            NetworkShuffleExec::Pending(v) => v.input.properties(),
             NetworkShuffleExec::Ready(v) => &v.properties,
         }
     }
 
     fn children(&self) -> Vec<&Arc<dyn ExecutionPlan>> {
         match self {
-            NetworkShuffleExec::Pending(v) => vec![&v.repartition_exec],
-            NetworkShuffleExec::Ready(_) => vec![],
+            NetworkShuffleExec::Pending(v) => vec![&v.input],
+            NetworkShuffleExec::Ready(v) => match &v.input_stage.plan {
+                MaybeEncodedPlan::Decoded(v) => vec![v],
+                MaybeEncodedPlan::Encoded(_) => vec![],
+            },
         }
     }
 
@@ -265,13 +279,18 @@ impl ExecutionPlan for NetworkShuffleExec {
         self: Arc<Self>,
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>, DataFusionError> {
-        if !children.is_empty() {
-            return plan_err!(
-                "NetworkShuffleExec: wrong number of children, expected 0, got {}",
-                children.len()
-            );
+        match self.as_ref() {
+            Self::Pending(v) => {
+                let mut v = v.clone();
+                v.input = require_one_child(children)?;
+                Ok(Arc::new(Self::Pending(v)))
+            }
+            Self::Ready(v) => {
+                let mut v = v.clone();
+                v.input_stage.plan = MaybeEncodedPlan::Decoded(require_one_child(children)?);
+                Ok(Arc::new(Self::Ready(v)))
+            }
         }
-        Ok(self)
     }
 
     fn execute(
@@ -288,35 +307,31 @@ impl ExecutionPlan for NetworkShuffleExec {
         // get the channel manager and current stage from our context
         let channel_resolver = get_distributed_channel_resolver(context.session_config())?;
 
-        // the `NetworkShuffleExec` node can only be executed in the context of a `StageExec`
-        let stage = StageExec::from_ctx(&context)?;
+        let input_stage = &self_ready.input_stage;
+        let encoded_input_plan = input_stage.plan.encoded()?;
 
-        // of our child stages find the one that matches the one we are supposed to be
-        // reading from
-        let input_stage = stage.input_stage(self_ready.stage_num)?;
-
-        let codec = DistributedCodec::new_combined_with_user(context.session_config());
-        let input_stage_proto = proto_from_input_stage(input_stage, &codec).map_err(|e| {
-            internal_datafusion_err!("NetworkShuffleExec: failed to convert stage to proto: {e}")
-        })?;
-
-        let input_stage_tasks = input_stage.tasks().to_vec();
-        let input_stage_num = input_stage.num() as u64;
-        let query_id = stage.query_id.to_string();
+        let input_stage_tasks = input_stage.tasks.to_vec();
+        let input_task_count = input_stage_tasks.len();
+        let input_stage_num = input_stage.num as u64;
+        let query_id = Bytes::from(input_stage.query_id.as_bytes().to_vec());
 
         let context_headers = ContextGrpcMetadata::headers_from_ctx(&context);
         let task_context = DistributedTaskContext::from_ctx(&context);
         let off = self_ready.properties.partitioning.partition_count() * task_context.task_index;
 
+        let adapter = DefaultSchemaAdapterFactory::from_schema(self.schema());
+        let (mapper, _indices) = adapter.map_schema(&self.schema())?;
+
         let stream = input_stage_tasks.into_iter().enumerate().map(|(i, task)| {
             let channel_resolver = Arc::clone(&channel_resolver);
+            let mapper = mapper.clone();
 
             let ticket = Request::from_parts(
                 MetadataMap::from_headers(context_headers.clone()),
                 Extensions::default(),
                 Ticket {
                     ticket: DoGet {
-                        stage_proto: input_stage_proto.clone(),
+                        plan_proto: encoded_input_plan.clone(),
                         target_partition: (off + partition) as u64,
                         stage_key: Some(StageKey {
                             query_id: query_id.clone(),
@@ -324,27 +339,39 @@ impl ExecutionPlan for NetworkShuffleExec {
                             task_number: i as u64,
                         }),
                         target_task_index: i as u64,
+                        target_task_count: input_task_count as u64,
                     }
                     .encode_to_vec()
                     .into(),
                 },
             );
 
+            let metrics_collection_capture = self_ready.metrics_collection.clone();
             async move {
                 let url = task.url.ok_or(internal_datafusion_err!(
                     "NetworkShuffleExec: task is unassigned, cannot proceed"
                 ))?;
 
-                let channel = channel_resolver.get_channel_for_url(&url).await?;
-                let stream = FlightServiceClient::new(channel)
+                let mut client = channel_resolver.get_flight_client_for_url(&url).await?;
+                let stream = client
                     .do_get(ticket)
                     .await
                     .map_err(map_status_to_datafusion_error)?
                     .into_inner()
                     .map_err(|err| FlightError::Tonic(Box::new(err)));
 
-                Ok(FlightRecordBatchStream::new_from_flight_data(stream)
-                    .map_err(map_flight_to_datafusion_error))
+                let metrics_collecting_stream =
+                    MetricsCollectingStream::new(stream, metrics_collection_capture);
+
+                Ok(
+                    FlightRecordBatchStream::new_from_flight_data(metrics_collecting_stream)
+                        .map_err(map_flight_to_datafusion_error)
+                        .map(move |batch| {
+                            let batch = batch?;
+
+                            mapper.map_batch(batch)
+                        }),
+                )
             }
             .try_flatten_stream()
             .boxed()

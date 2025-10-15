@@ -7,6 +7,7 @@ mod tests {
     };
     use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
     use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
+    use datafusion::physical_plan::repartition::RepartitionExec;
     use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
     use datafusion::physical_plan::{
         DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, execute_stream,
@@ -43,13 +44,15 @@ mod tests {
 
         for size in [1, 2, 3] {
             plan = Arc::new(NetworkShuffleExec::try_new(
-                plan,
-                Partitioning::RoundRobinBatch(size),
+                Arc::new(RepartitionExec::try_new(
+                    plan,
+                    Partitioning::Hash(vec![], size),
+                )?),
                 size,
             )?);
         }
         let plan = DistributedPhysicalOptimizerRule::distribute_plan(plan)?;
-        let stream = execute_stream(Arc::new(plan), ctx.task_ctx())?;
+        let stream = execute_stream(plan, ctx.task_ctx())?;
 
         let Err(err) = stream.try_collect::<Vec<_>>().await else {
             panic!("Should have failed")
