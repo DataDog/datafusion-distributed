@@ -147,7 +147,7 @@ pub trait DistributedExt: Sized {
     /// struct CustomExecCodec;
     ///
     /// impl PhysicalExtensionCodec for CustomExecCodec {
-    ///     fn try_decode(&self, buf: &[u8], inputs: &[Arc<dyn ExecutionPlan>], ctx: &TaskContext) -> datafusion::common::Result<Arc<dyn ExecutionPlan>> {
+    ///     fn try_decode(&self, buf: &[u8], inputs: &[Arc<dyn ExecutionPlan>], ctx: &dyn FunctionRegistry) -> datafusion::common::Result<Arc<dyn ExecutionPlan>> {
     ///         todo!()
     ///     }
     ///
