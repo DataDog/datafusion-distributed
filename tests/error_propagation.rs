@@ -3,7 +3,7 @@ mod tests {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::error::DataFusionError;
     use datafusion::execution::{
-        SendableRecordBatchStream, SessionState, SessionStateBuilder, TaskContext,
+        FunctionRegistry, SendableRecordBatchStream, SessionState, SessionStateBuilder, TaskContext,
     };
     use datafusion::physical_expr::{EquivalenceProperties, Partitioning};
     use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
@@ -141,7 +141,7 @@ mod tests {
             &self,
             buf: &[u8],
             _: &[Arc<dyn ExecutionPlan>],
-            _ctx: &TaskContext,
+            _ctx: &dyn FunctionRegistry,
         ) -> datafusion::common::Result<Arc<dyn ExecutionPlan>> {
             let node = ErrorExecProto::decode(buf).map_err(|err| proto_error(format!("{err}")))?;
             Ok(Arc::new(ErrorExec::new(&node.msg)))

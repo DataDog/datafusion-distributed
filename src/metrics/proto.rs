@@ -288,10 +288,6 @@ pub fn df_metric_to_proto(metric: Arc<Metric>) -> Result<MetricProto, DataFusion
             labels,
         }),
         MetricValue::Custom { .. } => internal_err!("{}", CUSTOM_METRICS_NOT_SUPPORTED),
-        MetricValue::OutputBytes(_) | MetricValue::PruningMetrics { .. } | MetricValue::Ratio { .. } => {
-            // TODO: Support these metrics
-            internal_err!("{}", UNSUPPORTED_METRICS)
-        }
     }
 }
 
