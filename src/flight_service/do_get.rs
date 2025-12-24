@@ -99,7 +99,8 @@ impl ArrowFlightEndpoint {
         let stage_data = once
             .get_or_try_init(|| async {
                 let proto_node = PhysicalPlanNode::try_decode(doget.plan_proto.as_ref())?;
-                let mut plan = proto_node.try_into_physical_plan(&ctx.task_ctx(), &codec)?;
+                let mut plan =
+                    proto_node.try_into_physical_plan(&ctx, &ctx.runtime_env(), &codec)?;
                 for hook in self.hooks.on_plan.iter() {
                     plan = hook(plan)
                 }

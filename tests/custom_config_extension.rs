@@ -5,7 +5,7 @@ mod tests {
     use datafusion::config::ConfigExtension;
     use datafusion::error::DataFusionError;
     use datafusion::execution::{
-        SendableRecordBatchStream, SessionState, SessionStateBuilder, TaskContext,
+        FunctionRegistry, SendableRecordBatchStream, SessionState, SessionStateBuilder, TaskContext,
     };
     use datafusion::physical_expr::EquivalenceProperties;
     use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
@@ -221,7 +221,7 @@ mod tests {
             &self,
             buf: &[u8],
             inputs: &[Arc<dyn ExecutionPlan>],
-            _ctx: &TaskContext,
+            _ctx: &dyn FunctionRegistry,
         ) -> datafusion::common::Result<Arc<dyn ExecutionPlan>> {
             let _node = CustomConfigExtensionRequiredExecProto::decode(buf)
                 .map_err(|err| internal_datafusion_err!("{err}"))?;

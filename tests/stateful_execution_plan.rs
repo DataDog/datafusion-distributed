@@ -4,7 +4,7 @@ mod tests {
     use datafusion::common::tree_node::{Transformed, TreeNode};
     use datafusion::error::DataFusionError;
     use datafusion::execution::{
-        SendableRecordBatchStream, SessionState, SessionStateBuilder, TaskContext,
+        FunctionRegistry, SendableRecordBatchStream, SessionState, SessionStateBuilder, TaskContext,
     };
     use datafusion::physical_expr::EquivalenceProperties;
     use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
@@ -191,7 +191,7 @@ mod tests {
             &self,
             buf: &[u8],
             inputs: &[Arc<dyn ExecutionPlan>],
-            _ctx: &TaskContext,
+            _ctx: &dyn FunctionRegistry,
         ) -> datafusion::common::Result<Arc<dyn ExecutionPlan>> {
             let _node =
                 PassThroughExecProto::decode(buf).map_err(|err| proto_error(format!("{err}")))?;
