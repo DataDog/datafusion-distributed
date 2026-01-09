@@ -19,10 +19,10 @@ async-trait = "0.1.88"
 chrono = "0.4.41"
 futures = "0.3.31"
 dashmap = "6.1.0"
-prost = "0.14.0"
+prost = "0.3"
 url = "2.5.4"
 arrow-flight = "57.1.0"
-tonic = { version = "0.14.1", features = ["transport"] }
+tonic = { version = "0.13", features = ["transport"] }
 axum = "0.7"
 object_store = { version = "0.12.4", features = ["aws"] }
 aws-config = "1"
@@ -31,18 +31,18 @@ openssl = { version = "0.10", features = ["vendored"] }
 clap = "4.5"
 
 # ballista feature
-ballista = { version = "50", optional = true }
-ballista-executor = { version = "50", optional = true }
-ballista-scheduler = { version = "50", optional = true }
-ballista-core = { version = "50", optional = true }
-
-[features]
-ballista-benchmarks = [
-    "ballista",
-    "ballista-executor",
-    "ballista-scheduler",
-    "ballista-core"
-]
+#ballista = { version = "50", optional = true }
+#ballista-executor = { version = "50", optional = true }
+#ballista-scheduler = { version = "50", optional = true }
+#ballista-core = { version = "50", optional = true }
+#
+#[features]
+#ballista-benchmarks = [
+#    "ballista",
+#    "ballista-executor",
+#    "ballista-scheduler",
+#    "ballista-core"
+#]
 
 [[bin]]
 name = "dfbench"
