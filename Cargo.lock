@@ -208,7 +208,7 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 [[package]]
 name = "arrow"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "arrow-arith",
  "arrow-array",
@@ -228,7 +228,7 @@ dependencies = [
 [[package]]
 name = "arrow-arith"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -241,7 +241,7 @@ dependencies = [
 [[package]]
 name = "arrow-array"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "ahash",
  "arrow-buffer",
@@ -259,7 +259,7 @@ dependencies = [
 [[package]]
 name = "arrow-buffer"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "bytes",
  "half",
@@ -270,7 +270,7 @@ dependencies = [
 [[package]]
 name = "arrow-cast"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -291,7 +291,7 @@ dependencies = [
 [[package]]
 name = "arrow-csv"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "arrow-array",
  "arrow-cast",
@@ -305,7 +305,7 @@ dependencies = [
 [[package]]
 name = "arrow-data"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "arrow-buffer",
  "arrow-schema",
@@ -317,7 +317,7 @@ dependencies = [
 [[package]]
 name = "arrow-flight"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -327,15 +327,16 @@ dependencies = [
  "base64",
  "bytes",
  "futures",
- "prost 0.13.5",
+ "prost 0.14.3",
  "prost-types",
  "tonic",
+ "tonic-prost",
 ]
 
 [[package]]
 name = "arrow-ipc"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -350,7 +351,7 @@ dependencies = [
 [[package]]
 name = "arrow-json"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -373,7 +374,7 @@ dependencies = [
 [[package]]
 name = "arrow-ord"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -385,7 +386,7 @@ dependencies = [
 [[package]]
 name = "arrow-row"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -397,7 +398,7 @@ dependencies = [
 [[package]]
 name = "arrow-schema"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "serde_core",
  "serde_json",
@@ -406,7 +407,7 @@ dependencies = [
 [[package]]
 name = "arrow-select"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "ahash",
  "arrow-array",
@@ -419,7 +420,7 @@ dependencies = [
 [[package]]
 name = "arrow-string"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
 dependencies = [
  "arrow-array",
  "arrow-buffer",
@@ -2015,8 +2016,7 @@ dependencies = [
  "pin-project",
  "pretty_assertions",
  "prost 0.13.5",
- "rand 0.9.2",
- "reqwest",
+ "rand 0.8.5",
  "structopt",
  "tokio",
  "tokio-stream",
@@ -2436,7 +2436,7 @@ dependencies = [
  "datafusion-physical-plan",
  "datafusion-proto-common",
  "object_store",
- "prost 0.14.1",
+ "prost 0.13.5",
 ]
 
 [[package]]
@@ -2446,8 +2446,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "38f4c54f4a47608d2ef5af2fbaca9975cac9e48b93acf41b2ccf584405a3da5e"
 dependencies = [
  "arrow",
- "datafusion-common",
- "prost 0.14.1",
+ "datafusion-common 51.0.0 (git+https://github.com/DataDog/datafusion?rev=3ae66138c1d6551b29a0039059570c9927a27d52)",
+ "prost 0.13.5",
 ]
 
 [[package]]
@@ -4573,12 +4573,12 @@ dependencies = [
 
 [[package]]
 name = "prost"
-version = "0.14.1"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7231bd9b3d3d33c86b58adbac74b5ec0ad9f496b19d22801d773636feaa95f3d"
+checksum = "d2ea70524a2f82d518bce41317d0fae74151505651af45faf1ffbd6fd33f0568"
 dependencies = [
  "bytes",
- "prost-derive 0.14.1",
+ "prost-derive 0.14.3",
 ]
 
 [[package]]
@@ -4608,12 +4608,25 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost-types"
-version = "0.13.5"
+name = "prost-derive"
+version = "0.14.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52c2c1bf36ddb1a1c396b3601a3cec27c2462e45f07c386894ec3ccf5332bd16"
+checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
- "prost 0.13.5",
+ "anyhow",
+ "itertools",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.110",
+]
+
+[[package]]
+name = "prost-types"
+version = "0.14.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8991c4cbdb8bc5b11f0b074ffe286c30e523de90fee5ba8132f1399f23cb3dd7"
+dependencies = [
+ "prost 0.14.3",
 ]
 
 [[package]]
@@ -5915,9 +5928,9 @@ dependencies = [
 
 [[package]]
 name = "tonic"
-version = "0.13.1"
+version = "0.14.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7e581ba15a835f4d9ea06c55ab1bd4dce26fc53752c69a04aac00703bfb49ba9"
+checksum = "eb7613188ce9f7df5bfe185db26c5814347d110db17920415cf2fbcad85e7203"
 dependencies = [
  "async-trait",
  "axum 0.8.7",
@@ -5932,14 +5945,25 @@ dependencies = [
  "hyper-util",
  "percent-encoding",
  "pin-project",
- "prost 0.13.5",
- "socket2 0.5.10",
+ "socket2 0.6.1",
+ "sync_wrapper",
  "tokio",
  "tokio-stream",
  "tower",
  "tower-layer",
  "tower-service",
  "tracing",
+]
+
+[[package]]
+name = "tonic-prost"
+version = "0.14.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66bd50ad6ce1252d87ef024b3d64fe4c3cf54a86fb9ef4c631fdd0ded7aeaa67"
+dependencies = [
+ "bytes",
+ "prost 0.14.3",
+ "tonic",
 ]
 
 [[package]]
@@ -6886,4 +6910,9 @@ dependencies = [
 [[patch.unused]]
 name = "arrow-avro"
 version = "57.1.0"
-source = "git+https://github.com/DataDog/arrow-rs?rev=dd2c5a10fd433374c896d62e9e4fee92b4717a7e#dd2c5a10fd433374c896d62e9e4fee92b4717a7e"
+source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6a11ee0944af229#779e9bd2ee43d7d882782e6bf6a11ee0944af229"
+
+[[patch.unused]]
+name = "datafusion-substrait"
+version = "51.0.0"
+source = "git+https://github.com/DataDog/datafusion?rev=3ae66138c1d6551b29a0039059570c9927a27d52#3ae66138c1d6551b29a0039059570c9927a27d52"
