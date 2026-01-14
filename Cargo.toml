@@ -23,7 +23,7 @@ arrow-flight = "57.1.0"
 arrow-select = "57.1.0"
 async-trait = "0.1.88"
 tokio = { version = "1.46.1", features = ["full"] }
-tonic = { version = "0.14.1", features = ["transport"] }
+tonic = { version = "0.13", features = ["transport"] }
 tower = "0.5.2"
 http = "1.3.1"
 itertools = "0.14.0"
@@ -32,7 +32,7 @@ url = "2.5.4"
 uuid = "1.17.0"
 delegate = "0.13.4"
 dashmap = "6.1.0"
-prost = "0.14.0"
+prost = "0.13"
 rand = "0.8.5"
 object_store = "0.12.3"
 bytes = "1.10.1"
@@ -49,7 +49,7 @@ arrow = { version = "57.1.0", optional = true }
 hyper-util = { version = "0.1.16", optional = true }
 pretty_assertions = { version = "1.4", optional = true }
 reqwest = { version = "0.12", optional = true }
-zip = { version = "6.0", optional = true }
+zip = { version = "4.0", optional = true }
 
 [features]
 avro = ["datafusion/avro"]
@@ -80,4 +80,25 @@ tokio-stream = "0.1.17"
 hyper-util = "0.1.16"
 pretty_assertions = "1.4"
 reqwest = "0.12"
-zip = "6.0"
+zip = "4.0"
+
+[patch.crates-io]
+datafusion = { git = "https://github.com/DataDog/datafusion", rev = "3ae66138c1d6551b29a0039059570c9927a27d52", package = "datafusion" }
+datafusion-substrait = { git = "https://github.com/DataDog/datafusion", rev = "3ae66138c1d6551b29a0039059570c9927a27d52", package = "datafusion-substrait" }
+datafusion-proto = { git = "https://github.com/DataDog/datafusion", rev = "3ae66138c1d6551b29a0039059570c9927a27d52", package = "datafusion-proto" }
+datafusion-proto-common = { git = "https://github.com/DataDog/datafusion", rev = "3ae66138c1d6551b29a0039059570c9927a27d52", package = "datafusion-proto-common" }
+arrow = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow" }
+arrow-flight = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-flight" }
+arrow-select = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-select" }
+arrow-ord = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-ord" }
+arrow-array = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-array" }
+arrow-data = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-data" }
+arrow-ipc = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-ipc" }
+arrow-schema = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-schema" }
+arrow-cast = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-cast" }
+arrow-buffer = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-buffer" }
+arrow-row = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-row" }
+arrow-string = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-string" }
+arrow-json = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-json" }
+arrow-avro = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-avro" }
+arrow-arith = { git = "https://github.com/DataDog/arrow-rs", rev = "dd2c5a10fd433374c896d62e9e4fee92b4717a7e", package = "arrow-arith" }
