@@ -84,10 +84,10 @@ reqwest = "0.12"
 zip = "4.0"
 
 [patch.crates-io]
-datafusion = { git = "https://github.com/DataDog/datafusion", rev = "3ae66138c1d6551b29a0039059570c9927a27d52", package = "datafusion" }
-datafusion-substrait = { git = "https://github.com/DataDog/datafusion", rev = "3ae66138c1d6551b29a0039059570c9927a27d52", package = "datafusion-substrait" }
-datafusion-proto = { git = "https://github.com/DataDog/datafusion", rev = "3ae66138c1d6551b29a0039059570c9927a27d52", package = "datafusion-proto" }
-datafusion-proto-common = { git = "https://github.com/DataDog/datafusion", rev = "3ae66138c1d6551b29a0039059570c9927a27d52", package = "datafusion-proto-common" }
+datafusion = { git = "https://github.com/DataDog/datafusion", rev = "e669fd8a50b72ebe1246f62cd7951c47171b4bf0", package = "datafusion" }
+datafusion-substrait = { git = "https://github.com/DataDog/datafusion", rev = "e669fd8a50b72ebe1246f62cd7951c47171b4bf0", package = "datafusion-substrait" }
+datafusion-proto = { git = "https://github.com/DataDog/datafusion", rev = "e669fd8a50b72ebe1246f62cd7951c47171b4bf0", package = "datafusion-proto" }
+datafusion-proto-common = { git = "https://github.com/DataDog/datafusion", rev = "e669fd8a50b72ebe1246f62cd7951c47171b4bf0", package = "datafusion-proto-common" }
 arrow = { git = "https://github.com/DataDog/arrow-rs", rev = "779e9bd2ee43d7d882782e6bf6a11ee0944af229", package = "arrow" }
 arrow-flight = { git = "https://github.com/DataDog/arrow-rs", rev = "779e9bd2ee43d7d882782e6bf6a11ee0944af229", package = "arrow-flight" }
 arrow-select = { git = "https://github.com/DataDog/arrow-rs", rev = "779e9bd2ee43d7d882782e6bf6a11ee0944af229", package = "arrow-select" }
