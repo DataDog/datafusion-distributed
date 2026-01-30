@@ -1669,8 +1669,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "arrow-schema",
@@ -1680,7 +1680,7 @@ dependencies = [
  "chrono",
  "datafusion-catalog",
  "datafusion-catalog-listing",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-common-runtime",
  "datafusion-datasource",
  "datafusion-datasource-arrow",
@@ -1724,13 +1724,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion-catalog"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "async-trait",
  "dashmap",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-common-runtime",
  "datafusion-datasource",
  "datafusion-execution",
@@ -1748,13 +1748,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion-catalog-listing"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "async-trait",
  "datafusion-catalog",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-datasource",
  "datafusion-execution",
  "datafusion-expr",
@@ -1781,7 +1781,7 @@ dependencies = [
  "chrono",
  "clap 4.5.53",
  "datafusion",
- "datafusion-common 52.0.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "datafusion-common 52.0.0",
  "dirs",
  "env_logger",
  "futures",
@@ -1818,8 +1818,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-common"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "ahash",
  "apache-avro",
@@ -1843,8 +1843,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-common-runtime"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "futures",
  "log",
@@ -1853,8 +1853,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-datasource"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "async-compression",
@@ -1862,7 +1862,7 @@ dependencies = [
  "bytes",
  "bzip2",
  "chrono",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-common-runtime",
  "datafusion-execution",
  "datafusion-expr",
@@ -1887,14 +1887,14 @@ dependencies = [
 
 [[package]]
 name = "datafusion-datasource-arrow"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "arrow-ipc",
  "async-trait",
  "bytes",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-common-runtime",
  "datafusion-datasource",
  "datafusion-execution",
@@ -1910,14 +1910,14 @@ dependencies = [
 
 [[package]]
 name = "datafusion-datasource-avro"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "apache-avro",
  "arrow",
  "async-trait",
  "bytes",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-datasource",
  "datafusion-physical-expr-common",
  "datafusion-physical-plan",
@@ -1929,13 +1929,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion-datasource-csv"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "async-trait",
  "bytes",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-common-runtime",
  "datafusion-datasource",
  "datafusion-execution",
@@ -1951,13 +1951,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion-datasource-json"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "async-trait",
  "bytes",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-common-runtime",
  "datafusion-datasource",
  "datafusion-execution",
@@ -1972,13 +1972,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion-datasource-parquet"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "async-trait",
  "bytes",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-common-runtime",
  "datafusion-datasource",
  "datafusion-execution",
@@ -2091,19 +2091,19 @@ dependencies = [
 
 [[package]]
 name = "datafusion-doc"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 
 [[package]]
 name = "datafusion-execution"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "async-trait",
  "chrono",
  "dashmap",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-expr",
  "futures",
  "log",
@@ -2117,13 +2117,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion-expr"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "async-trait",
  "chrono",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-doc",
  "datafusion-expr-common",
  "datafusion-functions-aggregate-common",
@@ -2139,11 +2139,11 @@ dependencies = [
 
 [[package]]
 name = "datafusion-expr-common"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "indexmap",
  "itertools 0.14.0",
  "paste",
@@ -2151,8 +2151,8 @@ dependencies = [
 
 [[package]]
 name = "datafusion-functions"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "arrow-buffer",
@@ -2161,7 +2161,7 @@ dependencies = [
  "blake3",
  "chrono",
  "chrono-tz",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-doc",
  "datafusion-execution",
  "datafusion-expr",
@@ -2181,12 +2181,12 @@ dependencies = [
 
 [[package]]
 name = "datafusion-functions-aggregate"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "ahash",
  "arrow",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-doc",
  "datafusion-execution",
  "datafusion-expr",
@@ -2201,24 +2201,24 @@ dependencies = [
 
 [[package]]
 name = "datafusion-functions-aggregate-common"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "ahash",
  "arrow",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-expr-common",
  "datafusion-physical-expr-common",
 ]
 
 [[package]]
 name = "datafusion-functions-nested"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "arrow-ord",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-doc",
  "datafusion-execution",
  "datafusion-expr",
@@ -2235,13 +2235,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion-functions-table"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "async-trait",
  "datafusion-catalog",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-expr",
  "datafusion-physical-plan",
  "parking_lot",
@@ -2250,11 +2250,11 @@ dependencies = [
 
 [[package]]
 name = "datafusion-functions-window"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-doc",
  "datafusion-expr",
  "datafusion-functions-window-common",
@@ -2267,17 +2267,17 @@ dependencies = [
 
 [[package]]
 name = "datafusion-functions-window-common"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-physical-expr-common",
 ]
 
 [[package]]
 name = "datafusion-macros"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "datafusion-doc",
  "quote",
@@ -2286,12 +2286,12 @@ dependencies = [
 
 [[package]]
 name = "datafusion-optimizer"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "chrono",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-expr",
  "datafusion-expr-common",
  "datafusion-physical-expr",
@@ -2305,12 +2305,12 @@ dependencies = [
 
 [[package]]
 name = "datafusion-physical-expr"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "ahash",
  "arrow",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-expr",
  "datafusion-expr-common",
  "datafusion-functions-aggregate-common",
@@ -2328,11 +2328,11 @@ dependencies = [
 
 [[package]]
 name = "datafusion-physical-expr-adapter"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-expr",
  "datafusion-functions",
  "datafusion-physical-expr",
@@ -2342,13 +2342,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion-physical-expr-common"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "ahash",
  "arrow",
  "chrono",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-expr-common",
  "hashbrown 0.16.1",
  "indexmap",
@@ -2358,11 +2358,11 @@ dependencies = [
 
 [[package]]
 name = "datafusion-physical-optimizer"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-execution",
  "datafusion-expr",
  "datafusion-expr-common",
@@ -2376,15 +2376,15 @@ dependencies = [
 
 [[package]]
 name = "datafusion-physical-plan"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "ahash",
  "arrow",
  "arrow-ord",
  "arrow-schema",
  "async-trait",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-common-runtime",
  "datafusion-execution",
  "datafusion-expr",
@@ -2406,14 +2406,14 @@ dependencies = [
 
 [[package]]
 name = "datafusion-proto"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "chrono",
  "datafusion-catalog",
  "datafusion-catalog-listing",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-datasource",
  "datafusion-datasource-arrow",
  "datafusion-datasource-csv",
@@ -2432,21 +2432,21 @@ dependencies = [
 
 [[package]]
 name = "datafusion-proto-common"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "prost",
 ]
 
 [[package]]
 name = "datafusion-pruning"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-datasource",
  "datafusion-expr-common",
  "datafusion-physical-expr",
@@ -2458,11 +2458,11 @@ dependencies = [
 
 [[package]]
 name = "datafusion-session"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "async-trait",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-execution",
  "datafusion-expr",
  "datafusion-physical-plan",
@@ -2471,13 +2471,13 @@ dependencies = [
 
 [[package]]
 name = "datafusion-sql"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
 dependencies = [
  "arrow",
  "bigdecimal",
  "chrono",
- "datafusion-common 52.0.0 (git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0)",
+ "datafusion-common 52.1.0",
  "datafusion-expr",
  "indexmap",
  "log",
@@ -6865,5 +6865,5 @@ source = "git+https://github.com/DataDog/arrow-rs?rev=779e9bd2ee43d7d882782e6bf6
 
 [[patch.unused]]
 name = "datafusion-substrait"
-version = "52.0.0"
-source = "git+https://github.com/DataDog/datafusion?rev=e669fd8a50b72ebe1246f62cd7951c47171b4bf0#e669fd8a50b72ebe1246f62cd7951c47171b4bf0"
+version = "52.1.0"
+source = "git+https://github.com/DataDog/datafusion?rev=4c8ae45b71bcad1735a879a4f9a5afe8c08628db#4c8ae45b71bcad1735a879a4f9a5afe8c08628db"
