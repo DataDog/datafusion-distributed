@@ -85,6 +85,7 @@ zip = "4.0"
 
 [patch.crates-io]
 datafusion = { git = "https://github.com/DataDog/datafusion", rev = "e669fd8a50b72ebe1246f62cd7951c47171b4bf0", package = "datafusion" }
+datafusion-datasource = { git = "https://github.com/DataDog/datafusion", rev = "e669fd8a50b72ebe1246f62cd7951c47171b4bf0", package = "datafusion-datasource" }
 datafusion-substrait = { git = "https://github.com/DataDog/datafusion", rev = "e669fd8a50b72ebe1246f62cd7951c47171b4bf0", package = "datafusion-substrait" }
 datafusion-proto = { git = "https://github.com/DataDog/datafusion", rev = "e669fd8a50b72ebe1246f62cd7951c47171b4bf0", package = "datafusion-proto" }
 datafusion-proto-common = { git = "https://github.com/DataDog/datafusion", rev = "e669fd8a50b72ebe1246f62cd7951c47171b4bf0", package = "datafusion-proto-common" }
