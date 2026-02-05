@@ -11,7 +11,6 @@ mod stage;
 
 mod distributed_planner;
 mod networking;
-mod observability;
 mod protobuf;
 #[cfg(any(feature = "integration", test))]
 pub mod test_utils;
@@ -38,9 +37,4 @@ pub use networking::{
 pub use stage::{
     DistributedTaskContext, ExecutionTask, Stage, display_plan_ascii, display_plan_graphviz,
     explain_analyze,
-};
-
-pub use observability::{
-    ObservabilityService, ObservabilityServiceClient, ObservabilityServiceImpl,
-    ObservabilityServiceServer, PingRequest, PingResponse,
 };
