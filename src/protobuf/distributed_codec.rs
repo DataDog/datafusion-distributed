@@ -19,7 +19,9 @@ use datafusion::physical_plan::{ExecutionPlan, Partitioning, PlanProperties};
 use datafusion::prelude::SessionConfig;
 use datafusion_proto::physical_plan::from_proto::parse_protobuf_partitioning;
 use datafusion_proto::physical_plan::to_proto::serialize_partitioning;
-use datafusion_proto::physical_plan::{ComposedPhysicalExtensionCodec, PhysicalExtensionCodec};
+use datafusion_proto::physical_plan::{
+    ComposedPhysicalExtensionCodec, DefaultPhysicalProtoConverter, PhysicalExtensionCodec,
+};
 use datafusion_proto::protobuf;
 use datafusion_proto::protobuf::proto_error;
 use itertools::Itertools;
@@ -55,6 +57,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                 "Expected DistributedExecNode in DistributedExecProto",
             ));
         };
+        let proto_converter = DefaultPhysicalProtoConverter;
 
         fn parse_stage_proto(
             proto: Option<StageProto>,
@@ -89,6 +92,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     ctx,
                     &schema,
                     &DistributedCodec {},
+                    &proto_converter,
                 )?
                 .ok_or(proto_error("NetworkShuffleExec is missing partitioning"))?;
 
@@ -113,6 +117,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     ctx,
                     &schema,
                     &DistributedCodec {},
+                    &proto_converter,
                 )?
                 .ok_or(proto_error("NetworkCoalesceExec is missing partitioning"))?;
 
@@ -152,6 +157,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     ctx,
                     &schema,
                     &DistributedCodec {},
+                    &proto_converter,
                 )?
                 .ok_or(proto_error("NetworkBroadcastExec is missing partitioning"))?;
 
@@ -228,6 +234,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                 tasks: encode_tasks(&stage.tasks),
             })
         }
+        let proto_converter = DefaultPhysicalProtoConverter;
 
         if let Some(node) = node.as_any().downcast_ref::<NetworkShuffleExec>() {
             let inner = NetworkShuffleExecProto {
@@ -235,6 +242,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                 partitioning: Some(serialize_partitioning(
                     node.properties().output_partitioning(),
                     &DistributedCodec {},
+                    &proto_converter,
                 )?),
                 input_stage: Some(encode_stage_proto(node.input_stage())?),
             };
@@ -250,6 +258,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                 partitioning: Some(serialize_partitioning(
                     node.properties().output_partitioning(),
                     &DistributedCodec {},
+                    &proto_converter,
                 )?),
                 input_stage: Some(encode_stage_proto(node.input_stage())?),
             };
@@ -275,6 +284,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                 partitioning: Some(serialize_partitioning(
                     node.properties().output_partitioning(),
                     &DistributedCodec {},
+                    &proto_converter,
                 )?),
                 input_stage: Some(encode_stage_proto(node.input_stage())?),
             };
