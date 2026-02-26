@@ -106,7 +106,14 @@ impl Worker {
         let stage_data = once
             .get_or_try_init(|| async {
                 let proto_node = PhysicalPlanNode::try_decode(doget.plan_proto.as_ref())?;
-                let mut plan = proto_node.try_into_physical_plan(&task_ctx, &codec)?;
+                // Restore shared expression state across decoding (notably dynamic filters).
+                let converter =
+                    datafusion_proto::physical_plan::DeduplicatingProtoConverter::default();
+                let mut plan = proto_node.try_into_physical_plan_with_converter(
+                    &task_ctx,
+                    &codec,
+                    &converter,
+                )?;
                 for hook in self.hooks.on_plan.iter() {
                     plan = hook(plan)
                 }

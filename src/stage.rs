@@ -106,11 +106,20 @@ pub(crate) enum MaybeEncodedPlan {
 impl MaybeEncodedPlan {
     pub(crate) fn to_encoded(&self, codec: &dyn PhysicalExtensionCodec) -> Result<Self> {
         Ok(match self {
-            Self::Decoded(plan) => Self::Encoded(
-                PhysicalPlanNode::try_from_physical_plan(Arc::clone(plan), codec)?
+            Self::Decoded(plan) => {
+                // Preserve shared expression state (e.g., dynamic filters) when serializing.
+                let converter =
+                    datafusion_proto::physical_plan::DeduplicatingProtoConverter::default();
+                Self::Encoded(
+                    PhysicalPlanNode::try_from_physical_plan_with_converter(
+                        Arc::clone(plan),
+                        codec,
+                        &converter,
+                    )?
                     .encode_to_vec()
                     .into(),
-            ),
+                )
+            }
             Self::Encoded(plan) => Self::Encoded(plan.clone()),
         })
     }
@@ -170,7 +179,7 @@ use crate::{NetworkBoundary, NetworkBoundaryExt};
 use bytes::Bytes;
 use datafusion::common::DataFusionError;
 use datafusion::physical_expr::Partitioning;
-use datafusion_proto::physical_plan::{AsExecutionPlan, PhysicalExtensionCodec};
+use datafusion_proto::physical_plan::PhysicalExtensionCodec;
 use datafusion_proto::protobuf::PhysicalPlanNode;
 use prost::Message;
 /// Be able to display a nice tree for stages.

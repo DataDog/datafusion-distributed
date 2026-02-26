@@ -151,6 +151,121 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_join_hive_dynamic_filter_comparison() -> Result<(), Box<dyn std::error::Error>> {
+        async fn run_query(
+            enable_join_dynamic_filter_pushdown: bool,
+        ) -> Result<(Vec<RecordBatch>, String), Box<dyn std::error::Error>> {
+            use datafusion::physical_plan::execute_stream;
+            use datafusion_distributed::{
+                DistributedMetricsFormat, rewrite_distributed_plan_with_metrics,
+            };
+            use futures::TryStreamExt;
+
+            let query = r#"
+                SELECT 
+                    f.f_dkey,
+                    f.timestamp,
+                    f.value,
+                    d.env,
+                    d.service,
+                    d.host
+                FROM dim d
+                INNER JOIN fact f ON d.d_dkey = f.f_dkey
+                WHERE d.service = 'log'
+                ORDER BY f_dkey, timestamp
+            "#;
+
+            let (mut ctx, _guard, _) =
+                start_localhost_context(1, DefaultSessionBuilder).await;
+            set_configs(&mut ctx);
+            ctx.state_ref()
+                .write()
+                .config_mut()
+                .options_mut()
+                .optimizer
+                .preserve_file_partitions = 0;
+            ctx.state_ref()
+                .write()
+                .config_mut()
+                .options_mut()
+                .optimizer
+                .enable_join_dynamic_filter_pushdown = enable_join_dynamic_filter_pushdown;
+            ctx.state_ref()
+                .write()
+                .config_mut()
+                .options_mut()
+                .execution
+                .parquet
+                .pushdown_filters = true;
+            register_tables(&ctx).await?;
+
+            let df = ctx.sql(query).await?;
+            let mut physical_plan = df.create_physical_plan().await?;
+            let plan_without_metrics = display_plan_ascii(physical_plan.as_ref(), false);
+            println!(
+                "\n—— PLAN (dynamic filter: {}) ——\n{}",
+                enable_join_dynamic_filter_pushdown, plan_without_metrics
+            );
+
+            let results = execute_stream(physical_plan.clone(), ctx.task_ctx())?
+                .try_collect::<Vec<_>>()
+                .await?;
+            physical_plan = rewrite_distributed_plan_with_metrics(
+                physical_plan,
+                DistributedMetricsFormat::PerTask,
+            )?;
+            let plan_with_metrics = display_plan_ascii(physical_plan.as_ref(), true);
+            println!(
+                "\n—— PLAN WITH METRICS (dynamic filter: {}) ——\n{}",
+                enable_join_dynamic_filter_pushdown, plan_with_metrics
+            );
+
+            println!(
+                "\n—— DATASOURCE LINES (dynamic filter: {}) ——",
+                enable_join_dynamic_filter_pushdown
+            );
+            for line in plan_with_metrics.lines() {
+                if line.contains("DataSourceExec:")
+                    || (line.contains("metrics=[") && line.contains("output_rows"))
+                {
+                    println!("{line}");
+                }
+            }
+
+            Ok((results, plan_with_metrics))
+        }
+
+        let (without_dynamic_filter, without_plan_with_metrics) = run_query(false).await?;
+        let (with_dynamic_filter, with_plan_with_metrics) = run_query(true).await?;
+
+        let without_rows: usize = without_dynamic_filter.iter().map(|b| b.num_rows()).sum();
+        let with_rows: usize = with_dynamic_filter.iter().map(|b| b.num_rows()).sum();
+        assert_eq!(
+            without_rows, with_rows,
+            "row counts should match with and without join dynamic filter pushdown"
+        );
+
+        let without_pretty = pretty_format_batches(&without_dynamic_filter)?.to_string();
+        let with_pretty = pretty_format_batches(&with_dynamic_filter)?.to_string();
+        assert_eq!(
+            without_pretty, with_pretty,
+            "result rows should match with and without join dynamic filter pushdown"
+        );
+
+        let without_datasource_rows = without_plan_with_metrics
+            .lines()
+            .filter(|line| line.contains("DataSourceExec:"))
+            .count();
+        let with_datasource_rows = with_plan_with_metrics
+            .lines()
+            .filter(|line| line.contains("DataSourceExec:"))
+            .count();
+        assert_eq!(without_datasource_rows, with_datasource_rows);
+
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_join_agg_hive() -> Result<(), Box<dyn std::error::Error>> {
         let query = r#"
             SELECT  f_dkey, 
