@@ -13,7 +13,9 @@ mod tests {
     use datafusion_distributed::test_utils::localhost::start_localhost_context;
     use datafusion_distributed::test_utils::parquet::register_parquet_tables;
     use datafusion_distributed::{DistributedExt, WorkerQueryContext};
-    use datafusion_proto::physical_plan::PhysicalExtensionCodec;
+    use datafusion_proto::physical_plan::{
+        PhysicalExtensionCodec, PhysicalProtoConverterExtension,
+    };
     use datafusion_proto::protobuf::proto_error;
     use futures::{TryStreamExt, stream};
     use prost::Message;
@@ -151,6 +153,7 @@ mod tests {
             buf: &[u8],
             inputs: &[Arc<dyn ExecutionPlan>],
             _ctx: &TaskContext,
+            _proto_converter: &dyn PhysicalProtoConverterExtension,
         ) -> datafusion::common::Result<Arc<dyn ExecutionPlan>> {
             let node =
                 ErrorThrowingExecProto::decode(buf).map_err(|err| proto_error(format!("{err}")))?;
@@ -172,6 +175,7 @@ mod tests {
             &self,
             node: Arc<dyn ExecutionPlan>,
             buf: &mut Vec<u8>,
+            _proto_converter: &dyn PhysicalProtoConverterExtension,
         ) -> datafusion::common::Result<()> {
             let Some(plan) = node.as_any().downcast_ref::<ErrorThrowingExec>() else {
                 return Err(proto_error(format!(

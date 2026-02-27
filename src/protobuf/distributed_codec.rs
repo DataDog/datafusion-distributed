@@ -17,10 +17,12 @@ use datafusion::physical_plan::execution_plan::{Boundedness, EmissionType};
 use datafusion::physical_plan::union::UnionExec;
 use datafusion::physical_plan::{ExecutionPlan, Partitioning, PlanProperties};
 use datafusion::prelude::SessionConfig;
+#[cfg(test)]
+use datafusion_proto::physical_plan::DefaultPhysicalProtoConverter;
 use datafusion_proto::physical_plan::from_proto::parse_protobuf_partitioning;
 use datafusion_proto::physical_plan::to_proto::serialize_partitioning;
 use datafusion_proto::physical_plan::{
-    ComposedPhysicalExtensionCodec, DefaultPhysicalProtoConverter, PhysicalExtensionCodec,
+    ComposedPhysicalExtensionCodec, PhysicalExtensionCodec, PhysicalProtoConverterExtension,
 };
 use datafusion_proto::protobuf;
 use datafusion_proto::protobuf::proto_error;
@@ -48,6 +50,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
         buf: &[u8],
         inputs: &[Arc<dyn ExecutionPlan>],
         ctx: &TaskContext,
+        proto_converter: &dyn PhysicalProtoConverterExtension,
     ) -> datafusion::common::Result<Arc<dyn ExecutionPlan>> {
         let DistributedExecProto {
             node: Some(distributed_exec_node),
@@ -110,7 +113,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     ctx,
                     &schema,
                     &DistributedCodec {},
-                    &DefaultPhysicalProtoConverter {},
+                    proto_converter,
                 )?
                 .ok_or(proto_error("NetworkShuffleExec is missing partitioning"))?;
 
@@ -135,7 +138,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     ctx,
                     &schema,
                     &DistributedCodec {},
-                    &DefaultPhysicalProtoConverter {},
+                    proto_converter,
                 )?
                 .ok_or(proto_error("NetworkCoalesceExec is missing partitioning"))?;
 
@@ -175,7 +178,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     ctx,
                     &schema,
                     &DistributedCodec {},
-                    &DefaultPhysicalProtoConverter {},
+                    proto_converter,
                 )?
                 .ok_or(proto_error("NetworkBroadcastExec is missing partitioning"))?;
 
@@ -244,6 +247,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
         &self,
         node: Arc<dyn ExecutionPlan>,
         buf: &mut Vec<u8>,
+        proto_converter: &dyn PhysicalProtoConverterExtension,
     ) -> datafusion::common::Result<()> {
         fn encode_stage_proto(stage: &Stage) -> Result<StageProto, DataFusionError> {
             Ok(StageProto {
@@ -263,7 +267,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                 partitioning: Some(serialize_partitioning(
                     node.properties().output_partitioning(),
                     &DistributedCodec {},
-                    &DefaultPhysicalProtoConverter {},
+                    proto_converter,
                 )?),
                 input_stage: Some(encode_stage_proto(node.input_stage())?),
             };
@@ -279,7 +283,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                 partitioning: Some(serialize_partitioning(
                     node.properties().output_partitioning(),
                     &DistributedCodec {},
-                    &DefaultPhysicalProtoConverter {},
+                    proto_converter,
                 )?),
                 input_stage: Some(encode_stage_proto(node.input_stage())?),
             };
@@ -305,7 +309,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                 partitioning: Some(serialize_partitioning(
                     node.properties().output_partitioning(),
                     &DistributedCodec {},
-                    &DefaultPhysicalProtoConverter {},
+                    proto_converter,
                 )?),
                 input_stage: Some(encode_stage_proto(node.input_stage())?),
             };
@@ -627,9 +631,14 @@ mod tests {
             Arc::new(new_network_hash_shuffle_exec(part, schema, dummy_stage()));
 
         let mut buf = Vec::new();
-        codec.try_encode(plan.clone(), &mut buf)?;
+        codec.try_encode(plan.clone(), &mut buf, &DefaultPhysicalProtoConverter {})?;
 
-        let decoded = codec.try_decode(&buf, &[empty_exec()], &ctx)?;
+        let decoded = codec.try_decode(
+            &buf,
+            &[empty_exec()],
+            &ctx,
+            &DefaultPhysicalProtoConverter {},
+        )?;
         assert_eq!(repr(&plan), repr(&decoded));
 
         Ok(())
@@ -650,9 +659,9 @@ mod tests {
         let plan: Arc<dyn ExecutionPlan> = Arc::new(PartitionIsolatorExec::new(flight.clone(), 1));
 
         let mut buf = Vec::new();
-        codec.try_encode(plan.clone(), &mut buf)?;
+        codec.try_encode(plan.clone(), &mut buf, &DefaultPhysicalProtoConverter {})?;
 
-        let decoded = codec.try_decode(&buf, &[flight], &ctx)?;
+        let decoded = codec.try_decode(&buf, &[flight], &ctx, &DefaultPhysicalProtoConverter {})?;
         assert_eq!(repr(&plan), repr(&decoded));
 
         Ok(())
@@ -679,9 +688,9 @@ mod tests {
         let plan: Arc<dyn ExecutionPlan> = Arc::new(PartitionIsolatorExec::new(union.clone(), 1));
 
         let mut buf = Vec::new();
-        codec.try_encode(plan.clone(), &mut buf)?;
+        codec.try_encode(plan.clone(), &mut buf, &DefaultPhysicalProtoConverter {})?;
 
-        let decoded = codec.try_decode(&buf, &[union], &ctx)?;
+        let decoded = codec.try_decode(&buf, &[union], &ctx, &DefaultPhysicalProtoConverter {})?;
         assert_eq!(repr(&plan), repr(&decoded));
 
         Ok(())
@@ -711,9 +720,9 @@ mod tests {
         let plan: Arc<dyn ExecutionPlan> = Arc::new(PartitionIsolatorExec::new(sort.clone(), 1));
 
         let mut buf = Vec::new();
-        codec.try_encode(plan.clone(), &mut buf)?;
+        codec.try_encode(plan.clone(), &mut buf, &DefaultPhysicalProtoConverter {})?;
 
-        let decoded = codec.try_decode(&buf, &[sort], &ctx)?;
+        let decoded = codec.try_decode(&buf, &[sort], &ctx, &DefaultPhysicalProtoConverter {})?;
         assert_eq!(repr(&plan), repr(&decoded));
 
         Ok(())
@@ -732,9 +741,14 @@ mod tests {
         ));
 
         let mut buf = Vec::new();
-        codec.try_encode(plan.clone(), &mut buf)?;
+        codec.try_encode(plan.clone(), &mut buf, &DefaultPhysicalProtoConverter {})?;
 
-        let decoded = codec.try_decode(&buf, &[empty_exec()], &ctx)?;
+        let decoded = codec.try_decode(
+            &buf,
+            &[empty_exec()],
+            &ctx,
+            &DefaultPhysicalProtoConverter {},
+        )?;
         assert_eq!(repr(&plan), repr(&decoded));
 
         Ok(())
@@ -755,9 +769,9 @@ mod tests {
         let plan: Arc<dyn ExecutionPlan> = Arc::new(PartitionIsolatorExec::new(flight.clone(), 1));
 
         let mut buf = Vec::new();
-        codec.try_encode(plan.clone(), &mut buf)?;
+        codec.try_encode(plan.clone(), &mut buf, &DefaultPhysicalProtoConverter {})?;
 
-        let decoded = codec.try_decode(&buf, &[flight], &ctx)?;
+        let decoded = codec.try_decode(&buf, &[flight], &ctx, &DefaultPhysicalProtoConverter {})?;
         assert_eq!(repr(&plan), repr(&decoded));
 
         Ok(())
@@ -784,9 +798,9 @@ mod tests {
         let plan: Arc<dyn ExecutionPlan> = Arc::new(PartitionIsolatorExec::new(union.clone(), 3));
 
         let mut buf = Vec::new();
-        codec.try_encode(plan.clone(), &mut buf)?;
+        codec.try_encode(plan.clone(), &mut buf, &DefaultPhysicalProtoConverter {})?;
 
-        let decoded = codec.try_decode(&buf, &[union], &ctx)?;
+        let decoded = codec.try_decode(&buf, &[union], &ctx, &DefaultPhysicalProtoConverter {})?;
         assert_eq!(repr(&plan), repr(&decoded));
 
         Ok(())
@@ -817,9 +831,14 @@ mod tests {
             )?);
 
         let mut buf = Vec::new();
-        codec.try_encode(plan.clone(), &mut buf)?;
+        codec.try_encode(plan.clone(), &mut buf, &DefaultPhysicalProtoConverter {})?;
 
-        let decoded = codec.try_decode(&buf, &[left, right], &ctx)?;
+        let decoded = codec.try_decode(
+            &buf,
+            &[left, right],
+            &ctx,
+            &DefaultPhysicalProtoConverter {},
+        )?;
         assert_eq!(repr(&plan), repr(&decoded));
 
         Ok(())

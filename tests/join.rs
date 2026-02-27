@@ -175,8 +175,7 @@ mod tests {
                 ORDER BY f_dkey, timestamp
             "#;
 
-            let (mut ctx, _guard, _) =
-                start_localhost_context(1, DefaultSessionBuilder).await;
+            let (mut ctx, _guard, _) = start_localhost_context(1, DefaultSessionBuilder).await;
             set_configs(&mut ctx);
             ctx.state_ref()
                 .write()

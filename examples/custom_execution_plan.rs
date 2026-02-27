@@ -42,7 +42,7 @@ use datafusion_distributed::{
     DistributedExt, DistributedPhysicalOptimizerRule, DistributedTaskContext, TaskEstimation,
     TaskEstimator, WorkerQueryContext, display_plan_ascii,
 };
-use datafusion_proto::physical_plan::PhysicalExtensionCodec;
+use datafusion_proto::physical_plan::{PhysicalExtensionCodec, PhysicalProtoConverterExtension};
 use datafusion_proto::protobuf;
 use datafusion_proto::protobuf::proto_error;
 use futures::{TryStreamExt, stream};
@@ -249,6 +249,7 @@ impl PhysicalExtensionCodec for NumbersExecCodec {
         buf: &[u8],
         inputs: &[Arc<dyn ExecutionPlan>],
         _ctx: &TaskContext,
+        _proto_converter: &dyn PhysicalProtoConverterExtension,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         if !inputs.is_empty() {
             return internal_err!("NumbersExec should have no children, got {}", inputs.len());
@@ -269,7 +270,12 @@ impl PhysicalExtensionCodec for NumbersExecCodec {
         )))
     }
 
-    fn try_encode(&self, node: Arc<dyn ExecutionPlan>, buf: &mut Vec<u8>) -> Result<()> {
+    fn try_encode(
+        &self,
+        node: Arc<dyn ExecutionPlan>,
+        buf: &mut Vec<u8>,
+        _proto_converter: &dyn PhysicalProtoConverterExtension,
+    ) -> Result<()> {
         let Some(exec) = node.as_any().downcast_ref::<NumbersExec>() else {
             return internal_err!("Expected plan to be NumbersExec, but was {}", node.name());
         };

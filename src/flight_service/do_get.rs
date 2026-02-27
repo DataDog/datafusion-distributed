@@ -109,11 +109,8 @@ impl Worker {
                 // Restore shared expression state across decoding (notably dynamic filters).
                 let converter =
                     datafusion_proto::physical_plan::DeduplicatingProtoConverter::default();
-                let mut plan = proto_node.try_into_physical_plan_with_converter(
-                    &task_ctx,
-                    &codec,
-                    &converter,
-                )?;
+                let mut plan = proto_node
+                    .try_into_physical_plan_with_converter(&task_ctx, &codec, &converter)?;
                 for hook in self.hooks.on_plan.iter() {
                     plan = hook(plan)
                 }

@@ -14,7 +14,9 @@ mod tests {
     use datafusion_distributed::test_utils::localhost::start_localhost_context;
     use datafusion_distributed::test_utils::parquet::register_parquet_tables;
     use datafusion_distributed::{DistributedExt, WorkerQueryContext};
-    use datafusion_proto::physical_plan::PhysicalExtensionCodec;
+    use datafusion_proto::physical_plan::{
+        PhysicalExtensionCodec, PhysicalProtoConverterExtension,
+    };
     use futures::TryStreamExt;
     use prost::Message;
     use std::any::Any;
@@ -206,6 +208,7 @@ mod tests {
             buf: &[u8],
             inputs: &[Arc<dyn ExecutionPlan>],
             _ctx: &TaskContext,
+            _proto_converter: &dyn PhysicalProtoConverterExtension,
         ) -> datafusion::common::Result<Arc<dyn ExecutionPlan>> {
             let _node = CustomConfigExtensionRequiredExecProto::decode(buf)
                 .map_err(|err| internal_datafusion_err!("{err}"))?;
@@ -226,6 +229,7 @@ mod tests {
             &self,
             _node: Arc<dyn ExecutionPlan>,
             buf: &mut Vec<u8>,
+            _proto_converter: &dyn PhysicalProtoConverterExtension,
         ) -> datafusion::common::Result<()> {
             CustomConfigExtensionRequiredExecProto::default()
                 .encode(buf)
