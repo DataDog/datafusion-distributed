@@ -104,18 +104,19 @@ pub(crate) enum MaybeEncodedPlan {
 }
 
 impl MaybeEncodedPlan {
-    pub(crate) fn to_encoded(
-        &self,
-        codec: &dyn PhysicalExtensionCodec,
-        proto_converter: &dyn PhysicalProtoConverterExtension,
-    ) -> Result<Self> {
+    pub(crate) fn to_encoded(&self, codec: &dyn PhysicalExtensionCodec) -> Result<Self> {
         Ok(match self {
-            Self::Decoded(plan) => Self::Encoded(
-                proto_converter
-                    .execution_plan_to_proto(plan, codec)?
-                    .encode_to_vec()
-                    .into(),
-            ),
+            Self::Decoded(plan) => {
+                // Preserve shared expression state (e.g., dynamic filters) when serializing.
+                let converter =
+                    datafusion_proto::physical_plan::DeduplicatingProtoConverter::default();
+                Self::Encoded(
+                    converter
+                        .execution_plan_to_proto(plan, codec)?
+                        .encode_to_vec()
+                        .into(),
+                )
+            }
             Self::Encoded(plan) => Self::Encoded(plan.clone()),
         })
     }

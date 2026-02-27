@@ -13,7 +13,6 @@ mod distributed_planner;
 mod networking;
 mod observability;
 mod protobuf;
-mod shared_proto_converter;
 #[cfg(any(feature = "integration", test))]
 pub mod test_utils;
 
