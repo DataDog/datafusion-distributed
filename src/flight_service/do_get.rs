@@ -98,28 +98,35 @@ impl Worker {
         let task_ctx = session_state.task_ctx();
 
         let key = doget.stage_key.ok_or_else(missing("stage_key"))?;
+        let proto_converter = self
+            .query_proto_converters
+            .get_with(key.query_id.clone(), async {
+                Arc::new(crate::shared_proto_converter::SharedPhysicalProtoConverter::new())
+            })
+            .await;
         let once = self
             .task_data_entries
             .get_with(key.clone(), async { Default::default() })
             .await;
 
         let stage_data = once
-            .get_or_try_init(|| async {
-                let proto_node = PhysicalPlanNode::try_decode(doget.plan_proto.as_ref())?;
-                // Restore shared expression state across decoding (notably dynamic filters).
-                let converter =
-                    datafusion_proto::physical_plan::DeduplicatingProtoConverter::default();
-                let mut plan = converter.proto_to_execution_plan(&task_ctx, &codec, &proto_node)?;
-                for hook in self.hooks.on_plan.iter() {
-                    plan = hook(plan)
-                }
+            .get_or_try_init({
+                let proto_converter = Arc::clone(&proto_converter);
+                || async move {
+                    let proto_node = PhysicalPlanNode::try_decode(doget.plan_proto.as_ref())?;
+                    let mut plan =
+                        proto_converter.proto_to_execution_plan(&task_ctx, &codec, &proto_node)?;
+                    for hook in self.hooks.on_plan.iter() {
+                        plan = hook(plan)
+                    }
 
-                // Initialize partition count to the number of partitions in the stage
-                let total_partitions = plan.properties().partitioning.partition_count();
-                Ok::<_, DataFusionError>(TaskData {
-                    plan,
-                    num_partitions_remaining: Arc::new(AtomicUsize::new(total_partitions)),
-                })
+                    // Initialize partition count to the number of partitions in the stage
+                    let total_partitions = plan.properties().partitioning.partition_count();
+                    Ok::<_, DataFusionError>(TaskData {
+                        plan,
+                        num_partitions_remaining: Arc::new(AtomicUsize::new(total_partitions)),
+                    })
+                }
             })
             .await
             .map_err(|err| Status::invalid_argument(format!("Cannot decode stage proto: {err}")))?;

@@ -2,6 +2,7 @@ use crate::common::require_one_child;
 use crate::distributed_planner::NetworkBoundaryExt;
 use crate::networking::get_distributed_worker_resolver;
 use crate::protobuf::DistributedCodec;
+use crate::shared_proto_converter::SharedPhysicalProtoConverter;
 use crate::stage::{ExecutionTask, Stage};
 use datafusion::common::exec_err;
 use datafusion::common::internal_datafusion_err;
@@ -54,6 +55,7 @@ impl DistributedExec {
         urls: &[Url],
         codec: &dyn PhysicalExtensionCodec,
     ) -> datafusion::common::Result<Arc<dyn ExecutionPlan>> {
+        let proto_converter = SharedPhysicalProtoConverter::new();
         let prepared = Arc::clone(&self.plan).transform_up(|plan| {
             let Some(plan) = plan.as_network_boundary() else {
                 return Ok(Transformed::no(plan));
@@ -67,7 +69,7 @@ impl DistributedExec {
             let ready_stage = Stage {
                 query_id: stage.query_id,
                 num: stage.num,
-                plan: stage.plan.to_encoded(codec)?,
+                plan: stage.plan.to_encoded(codec, &proto_converter)?,
                 tasks: stage
                     .tasks
                     .iter()

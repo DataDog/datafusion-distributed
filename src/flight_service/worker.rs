@@ -1,6 +1,7 @@
 use crate::flight_service::WorkerSessionBuilder;
 use crate::flight_service::do_get::TaskData;
 use crate::protobuf::StageKey;
+use crate::shared_proto_converter::SharedPhysicalProtoConverter;
 use crate::{DefaultSessionBuilder, ObservabilityServiceImpl};
 use arrow_flight::flight_service_server::{FlightService, FlightServiceServer};
 use arrow_flight::{
@@ -8,6 +9,7 @@ use arrow_flight::{
     HandshakeRequest, HandshakeResponse, PollInfo, PutResult, SchemaResult, Ticket,
 };
 use async_trait::async_trait;
+use bytes::Bytes;
 use datafusion::execution::runtime_env::RuntimeEnv;
 use datafusion::physical_plan::ExecutionPlan;
 use futures::stream::BoxStream;
@@ -31,6 +33,9 @@ pub struct Worker {
     /// This prevents memory leaks from abandoned or incomplete queries while allowing concurrent
     /// access to task results across multiple partition requests.
     pub(super) task_data_entries: Arc<Cache<StageKey, Arc<OnceCell<TaskData>>>>,
+    /// Query-scoped proto converters that preserve dynamic filter identity while
+    /// independent stage plans are decoded over time.
+    pub(super) query_proto_converters: Arc<Cache<Bytes, Arc<SharedPhysicalProtoConverter>>>,
     pub(super) session_builder: Arc<dyn WorkerSessionBuilder + Send + Sync>,
     pub(super) hooks: WorkerHooks,
     pub(super) max_message_size: Option<usize>,
@@ -41,9 +46,13 @@ impl Default for Worker {
         let cache = Cache::builder()
             .time_to_idle(Duration::from_secs(60))
             .build();
+        let query_proto_converters = Cache::builder()
+            .time_to_idle(Duration::from_secs(60))
+            .build();
         Self {
             runtime: Arc::new(RuntimeEnv::default()),
             task_data_entries: Arc::new(cache),
+            query_proto_converters: Arc::new(query_proto_converters),
             session_builder: Arc::new(DefaultSessionBuilder),
             hooks: WorkerHooks::default(),
             max_message_size: Some(usize::MAX),
