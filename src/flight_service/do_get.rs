@@ -23,7 +23,7 @@ use datafusion::arrow::ipc::writer::IpcWriteOptions;
 use datafusion::common::exec_datafusion_err;
 use datafusion::error::DataFusionError;
 use datafusion::execution::{SendableRecordBatchStream, SessionStateBuilder};
-use datafusion::physical_plan::{ExecutionPlan, displayable};
+use datafusion::physical_plan::ExecutionPlan;
 use datafusion_proto::physical_plan::{AsExecutionPlan, PhysicalProtoConverterExtension};
 use datafusion_proto::protobuf::PhysicalPlanNode;
 use futures::TryStreamExt;
@@ -73,12 +73,6 @@ pub struct TaskData {
 }
 
 impl Worker {
-    fn debug_enabled() -> bool {
-        std::env::var("DD_DF_DISTRIBUTED_DEBUG")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false)
-    }
-
     pub(super) async fn get(
         &self,
         request: Request<Ticket>,
@@ -104,17 +98,6 @@ impl Worker {
         let task_ctx = session_state.task_ctx();
 
         let key = doget.stage_key.ok_or_else(missing("stage_key"))?;
-        if Self::debug_enabled() {
-            eprintln!(
-                "[df-distributed][do_get] request stage={} task={} partitions={}..{} query_id_len={} plan_proto_bytes={}",
-                key.stage_id,
-                key.task_number,
-                doget.target_partition_start,
-                doget.target_partition_end,
-                key.query_id.len(),
-                doget.plan_proto.len()
-            );
-        }
         let once = self
             .task_data_entries
             .get_with(key.clone(), async { Default::default() })
@@ -127,14 +110,6 @@ impl Worker {
                 let converter =
                     datafusion_proto::physical_plan::DeduplicatingProtoConverter::default();
                 let mut plan = converter.proto_to_execution_plan(&task_ctx, &codec, &proto_node)?;
-                if Self::debug_enabled() {
-                    eprintln!(
-                        "[df-distributed][do_get] decoded stage={} task={} plan:\n{}",
-                        key.stage_id,
-                        key.task_number,
-                        displayable(plan.as_ref()).indent(false)
-                    );
-                }
                 for hook in self.hooks.on_plan.iter() {
                     plan = hook(plan)
                 }
