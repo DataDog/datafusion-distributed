@@ -2,13 +2,15 @@ use crate::common::require_one_child;
 use crate::distributed_planner::NetworkBoundaryExt;
 use crate::networking::get_distributed_worker_resolver;
 use crate::protobuf::DistributedCodec;
-use crate::stage::{ExecutionTask, Stage};
+use crate::stage::{ExecutionTask, MaybeEncodedPlan, Stage};
 use datafusion::common::exec_err;
 use datafusion::common::internal_datafusion_err;
 use datafusion::common::tree_node::{Transformed, TreeNode};
 use datafusion::error::DataFusionError;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
-use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
+use datafusion::physical_plan::{
+    DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, displayable,
+};
 use datafusion_proto::physical_plan::PhysicalExtensionCodec;
 use rand::Rng;
 use std::any::Any;
@@ -30,6 +32,12 @@ pub struct DistributedExec {
 }
 
 impl DistributedExec {
+    fn debug_enabled() -> bool {
+        std::env::var("DD_DF_DISTRIBUTED_DEBUG")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    }
+
     pub fn new(plan: Arc<dyn ExecutionPlan>) -> Self {
         Self {
             plan,
@@ -63,11 +71,32 @@ impl DistributedExec {
             let start_idx = rng.random_range(0..urls.len());
 
             let stage = plan.input_stage();
+            let debug = Self::debug_enabled();
+            let stage_plan_for_debug = stage
+                .plan
+                .decoded()
+                .map(|p| displayable(p.as_ref()).indent(false).to_string())
+                .unwrap_or_else(|_| "<encoded-stage-plan>".to_string());
+
+            let encoded_plan = stage.plan.to_encoded(codec)?;
+            if debug {
+                let encoded_len = match &encoded_plan {
+                    MaybeEncodedPlan::Encoded(bytes) => bytes.len(),
+                    MaybeEncodedPlan::Decoded(_) => 0,
+                };
+                eprintln!(
+                    "[df-distributed][prepare] stage={} query_id={} tasks={} encoded_bytes={encoded_len}\n{}",
+                    stage.num,
+                    stage.query_id,
+                    stage.tasks.len(),
+                    stage_plan_for_debug
+                );
+            }
 
             let ready_stage = Stage {
                 query_id: stage.query_id,
                 num: stage.num,
-                plan: stage.plan.to_encoded(codec)?,
+                plan: encoded_plan,
                 tasks: stage
                     .tasks
                     .iter()
