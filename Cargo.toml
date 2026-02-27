@@ -2,8 +2,8 @@
 members = ["benchmarks", "cli", "console"]
 
 [workspace.dependencies]
-datafusion = { git = "https://github.com/DataDog/datafusion", rev = "c196a6d1363e8c369e66f38b3cf17ade760a01b0", package = "datafusion", default-features = false }
-datafusion-proto = { git = "https://github.com/DataDog/datafusion", rev = "c196a6d1363e8c369e66f38b3cf17ade760a01b0", package = "datafusion-proto" }
+datafusion = { git = "https://github.com/DataDog/datafusion", rev = "da0dd0a6b2ea66dcb703dbaaf40a6da685a3bc30", package = "datafusion", default-features = false }
+datafusion-proto = { git = "https://github.com/DataDog/datafusion", rev = "da0dd0a6b2ea66dcb703dbaaf40a6da685a3bc30", package = "datafusion-proto" }
 
 [package]
 name = "datafusion-distributed"
