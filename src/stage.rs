@@ -111,13 +111,10 @@ impl MaybeEncodedPlan {
                 let converter =
                     datafusion_proto::physical_plan::DeduplicatingProtoConverter::default();
                 Self::Encoded(
-                    PhysicalPlanNode::try_from_physical_plan_with_converter(
-                        Arc::clone(plan),
-                        codec,
-                        &converter,
-                    )?
-                    .encode_to_vec()
-                    .into(),
+                    converter
+                        .execution_plan_to_proto(plan, codec)?
+                        .encode_to_vec()
+                        .into(),
                 )
             }
             Self::Encoded(plan) => Self::Encoded(plan.clone()),
@@ -179,8 +176,7 @@ use crate::{NetworkBoundary, NetworkBoundaryExt};
 use bytes::Bytes;
 use datafusion::common::DataFusionError;
 use datafusion::physical_expr::Partitioning;
-use datafusion_proto::physical_plan::PhysicalExtensionCodec;
-use datafusion_proto::protobuf::PhysicalPlanNode;
+use datafusion_proto::physical_plan::{PhysicalExtensionCodec, PhysicalProtoConverterExtension};
 use prost::Message;
 /// Be able to display a nice tree for stages.
 ///

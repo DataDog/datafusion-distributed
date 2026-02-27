@@ -24,7 +24,7 @@ use datafusion::common::exec_datafusion_err;
 use datafusion::error::DataFusionError;
 use datafusion::execution::{SendableRecordBatchStream, SessionStateBuilder};
 use datafusion::physical_plan::ExecutionPlan;
-use datafusion_proto::physical_plan::AsExecutionPlan;
+use datafusion_proto::physical_plan::{AsExecutionPlan, PhysicalProtoConverterExtension};
 use datafusion_proto::protobuf::PhysicalPlanNode;
 use futures::TryStreamExt;
 use prost::Message;
@@ -109,8 +109,7 @@ impl Worker {
                 // Restore shared expression state across decoding (notably dynamic filters).
                 let converter =
                     datafusion_proto::physical_plan::DeduplicatingProtoConverter::default();
-                let mut plan = proto_node
-                    .try_into_physical_plan_with_converter(&task_ctx, &codec, &converter)?;
+                let mut plan = converter.proto_to_execution_plan(&task_ctx, &codec, &proto_node)?;
                 for hook in self.hooks.on_plan.iter() {
                     plan = hook(plan)
                 }
