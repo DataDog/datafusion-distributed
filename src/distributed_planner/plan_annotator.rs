@@ -1,9 +1,9 @@
 use crate::TaskCountAnnotation::{Desired, Maximum};
-use crate::execution_plans::ChildrenIsolatorUnionExec;
+use crate::execution_plans::{ChildrenIsolatorUnionExec, PartitionIsolatorExec};
 use crate::{BroadcastExec, DistributedConfig, TaskCountAnnotation, TaskEstimator};
 use datafusion::common::{DataFusionError, plan_datafusion_err};
 use datafusion::config::ConfigOptions;
-use datafusion::physical_expr::Partitioning;
+use datafusion::physical_expr::{Partitioning, PhysicalExpr, expressions::Column};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion::physical_plan::execution_plan::CardinalityEffect;
@@ -249,14 +249,22 @@ fn _annotate_plan(
         task_count: task_count.clone(),
     };
 
-    // Upon reaching a hash repartition, we need to introduce a shuffle right above it.
+    // Upon reaching a hash repartition, we need to introduce a shuffle right above it —
+    // unless the leaf scan reachable below is already globally hash-partitioned on the
+    // same column(s). In that case the repartition is purely local (no network needed).
     if let Some(r_exec) = plan.as_any().downcast_ref::<RepartitionExec>() {
-        if matches!(r_exec.partitioning(), Partitioning::Hash(_, _)) {
-            annotation = AnnotatedPlan {
-                plan_or_nb: PlanOrNetworkBoundary::Shuffle,
-                children: vec![annotation],
-                task_count,
-            };
+        if let Partitioning::Hash(required_exprs, _) = r_exec.partitioning() {
+            if !annotation
+                .children
+                .iter()
+                .any(|c| has_matching_hash_leaf(c, required_exprs))
+            {
+                annotation = AnnotatedPlan {
+                    plan_or_nb: PlanOrNetworkBoundary::Shuffle,
+                    children: vec![annotation],
+                    task_count,
+                };
+            }
         }
     } else if let Some(parent) = parent
         // If this node is a leaf node, putting a network boundary above is a bit wasteful, so
@@ -398,6 +406,72 @@ fn _annotate_plan(
         // to do anything else.
         Ok(annotation)
     }
+}
+
+/// Returns `true` if there is a [`PartitionIsolatorExec`] with `preserve_hash = true`
+/// reachable from `annotated` via a single-child path, without crossing network boundaries
+/// or multi-child nodes (e.g. joins), whose output partitioning is `Hash` on the same
+/// columns as `required_exprs`.
+///
+/// Used to detect "local re-hash" patterns: when a `RepartitionExec: Hash([col], N)` sits
+/// above a scan that is already globally hash-partitioned per worker on the same column,
+/// the repartition is purely local and does not require a `NetworkShuffleExec`.
+fn has_matching_hash_leaf(
+    annotated: &AnnotatedPlan,
+    required_exprs: &[Arc<dyn PhysicalExpr>],
+) -> bool {
+    if annotated.plan_or_nb.is_network_boundary() {
+        return false;
+    }
+    let PlanOrNetworkBoundary::Plan(plan) = &annotated.plan_or_nb else {
+        return false;
+    };
+
+    // Leaf node: check whether its output has Hash partitioning on the same column(s).
+    if annotated.children.is_empty() {
+        return if let Partitioning::Hash(leaf_exprs, _) = plan.properties().output_partitioning() {
+            hash_exprs_compatible(required_exprs, leaf_exprs)
+        } else {
+            false
+        };
+    }
+
+    // Found a PartitionIsolatorExec with preserve_hash: check its input's partitioning.
+    if let Some(isolator) = plan.as_any().downcast_ref::<PartitionIsolatorExec>() {
+        if isolator.preserve_hash {
+            if let Partitioning::Hash(iso_exprs, _) =
+                isolator.input.properties().output_partitioning()
+            {
+                return hash_exprs_compatible(required_exprs, iso_exprs);
+            }
+            return false;
+        }
+    }
+
+    // Only follow single-child paths to avoid false positives through joins and unions.
+    if annotated.children.len() != 1 {
+        return false;
+    }
+    has_matching_hash_leaf(&annotated.children[0], required_exprs)
+}
+
+/// Returns `true` if both expression lists reference the same columns.
+/// Uses name comparison for [`Column`] expressions, conservatively returns `false` otherwise.
+fn hash_exprs_compatible(a: &[Arc<dyn PhysicalExpr>], b: &[Arc<dyn PhysicalExpr>]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b.iter()).all(|(x, y)| {
+        match (
+            x.as_any().downcast_ref::<Column>(),
+            y.as_any().downcast_ref::<Column>(),
+        ) {
+            (Some(cx), Some(cy)) => cx.name() == cy.name(),
+            // Conservatively treat non-Column expressions as non-matching so the
+            // shuffle is added (safe fallback; bucket scans always use Column exprs).
+            _ => false,
+        }
+    })
 }
 
 #[cfg(test)]

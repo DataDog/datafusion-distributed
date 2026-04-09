@@ -122,7 +122,10 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     parse_stage_proto(input_stage, inputs)?,
                 )))
             }
-            DistributedExecNode::PartitionIsolator(PartitionIsolatorExecProto { n_tasks }) => {
+            DistributedExecNode::PartitionIsolator(PartitionIsolatorExecProto {
+                n_tasks,
+                preserve_hash,
+            }) => {
                 if inputs.len() != 1 {
                     return Err(proto_error(format!(
                         "PartitionIsolatorExec expects exactly one child, got {}",
@@ -132,10 +135,12 @@ impl PhysicalExtensionCodec for DistributedCodec {
 
                 let child = inputs.first().unwrap();
 
-                Ok(Arc::new(PartitionIsolatorExec::new(
-                    child.clone(),
-                    n_tasks as usize,
-                )))
+                let exec = if preserve_hash {
+                    PartitionIsolatorExec::new_preserving_hash(child.clone(), n_tasks as usize)
+                } else {
+                    PartitionIsolatorExec::new(child.clone(), n_tasks as usize)
+                };
+                Ok(Arc::new(exec))
             }
             DistributedExecNode::NetworkBroadcast(NetworkBroadcastExecProto {
                 schema,
@@ -262,6 +267,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
         } else if let Some(node) = node.as_any().downcast_ref::<PartitionIsolatorExec>() {
             let inner = PartitionIsolatorExecProto {
                 n_tasks: node.n_tasks as u64,
+                preserve_hash: node.preserve_hash,
             };
 
             let wrapper = DistributedExecProto {
@@ -372,6 +378,11 @@ pub enum DistributedExecNode {
 pub struct PartitionIsolatorExecProto {
     #[prost(uint64, tag = "1")]
     pub n_tasks: u64,
+    /// When `true`, the underlying scan's `Partitioning::Hash` is preserved so that
+    /// DataFusion can skip local hash repartitions and avoid `NetworkShuffleExec`.
+    /// Defaults to `false` (backward-compatible).
+    #[prost(bool, tag = "2")]
+    pub preserve_hash: bool,
 }
 
 /// Protobuf representation of the [NetworkShuffleExec] physical node. It serves as

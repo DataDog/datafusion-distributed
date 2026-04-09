@@ -57,24 +57,47 @@ pub struct PartitionIsolatorExec {
     pub(crate) properties: PlanProperties,
     pub(crate) n_tasks: usize,
     pub(crate) metrics: ExecutionPlanMetricsSet,
+    /// When `true`, the input's `Partitioning::Hash` is preserved instead of being replaced
+    /// with `UnknownPartitioning`. This allows DataFusion's optimizer to skip local
+    /// `RepartitionExec::Hash` nodes for aggregations on already co-partitioned data
+    /// (e.g. `IcebergBucketScan`), which in turn prevents `NetworkShuffleExec` insertion.
+    pub(crate) preserve_hash: bool,
 }
 
 impl PartitionIsolatorExec {
     pub fn new(input: Arc<dyn ExecutionPlan>, n_tasks: usize) -> Self {
-        let input_partitions = input.properties().partitioning.partition_count();
+        Self::new_internal(input, n_tasks, false)
+    }
 
+    /// Like [`new`], but preserves `Partitioning::Hash` from the input instead of replacing
+    /// it with `UnknownPartitioning`. Use this when the underlying scan is globally
+    /// hash-partitioned across distributed workers (e.g. `IcebergBucketScan`).
+    pub fn new_preserving_hash(input: Arc<dyn ExecutionPlan>, n_tasks: usize) -> Self {
+        Self::new_internal(input, n_tasks, true)
+    }
+
+    fn new_internal(input: Arc<dyn ExecutionPlan>, n_tasks: usize, preserve_hash: bool) -> Self {
+        let input_partitions = input.properties().partitioning.partition_count();
         let partition_count = Self::partition_groups(input_partitions, n_tasks)[0].len();
 
-        let properties = input
-            .properties()
-            .clone()
-            .with_partitioning(Partitioning::UnknownPartitioning(partition_count));
+        let properties = if preserve_hash {
+            // Keep the full Hash partitioning from the input. Each worker exposes K logical
+            // partitions but only executes the ones in its assigned group — the rest return
+            // empty streams (handled by `execute()`).
+            input.properties().clone()
+        } else {
+            input
+                .properties()
+                .clone()
+                .with_partitioning(Partitioning::UnknownPartitioning(partition_count))
+        };
 
         Self {
             input: input.clone(),
             properties,
             n_tasks,
             metrics: ExecutionPlanMetricsSet::new(),
+            preserve_hash,
         }
     }
 
@@ -146,7 +169,7 @@ impl ExecutionPlan for PartitionIsolatorExec {
         children: Vec<Arc<dyn ExecutionPlan>>,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let input = require_one_child(children)?;
-        Ok(Arc::new(Self::new(input, self.n_tasks)))
+        Ok(Arc::new(Self::new_internal(input, self.n_tasks, self.preserve_hash)))
     }
 
     fn execute(
