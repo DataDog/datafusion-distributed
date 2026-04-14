@@ -28,8 +28,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tonic::{Request, Response, Status};
 
-/// How many record batches to buffer from the plan execution.
-const RECORD_BATCH_BUFFER_SIZE: usize = 2;
 const WAIT_PLAN_TIMEOUT_SECS: u64 = 10;
 
 impl Worker {
@@ -67,6 +65,7 @@ impl Worker {
             )))?,
         };
         let send_metrics = d_cfg.collect_metrics;
+        let record_batch_buffer_size = d_cfg.record_batch_buffer_size;
         let partition_count = plan.properties().partitioning.partition_count();
         let plan_name = plan.name();
 
@@ -160,7 +159,7 @@ impl Worker {
         // Merge all the per-partition streams into one. Each message in the stream is marked with
         // the original partition, so they can be reconstructed at the other side of the boundary.
         let memory_pool = Arc::clone(&task_ctx.runtime_env().memory_pool);
-        let stream = spawn_select_all(streams, memory_pool, RECORD_BATCH_BUFFER_SIZE);
+        let stream = spawn_select_all(streams, memory_pool, record_batch_buffer_size);
 
         Ok(Response::new(Box::pin(stream.map_err(|err| match err {
             FlightError::Tonic(status) => *status,
