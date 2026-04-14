@@ -48,6 +48,11 @@ extensions_options! {
         /// The compression used for sending data over the network between workers.
         /// It can be set to either `zstd`, `lz4` or `none`.
         pub compression: String, default = "lz4".to_string()
+        /// Size of the bounded mpsc channel used in `spawn_select_all` to merge N partition
+        /// streams into one gRPC response stream. With only 2 slots and N SpawnedTasks competing,
+        /// any brief gRPC/HTTP2 stall freezes the entire pipeline. Increase this experimentally
+        /// to measure the impact of the channel stall. Default is 2 to preserve existing behavior.
+        pub record_batch_buffer_size: usize, default = 2
         /// Maximum tasks that will be assigned per stage during distributed planning.
         /// If set to 0, this value is the number of workers returned by the provided `WorkerResolver`.
         /// It defaults to 0.
