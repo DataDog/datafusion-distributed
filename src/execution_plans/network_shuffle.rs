@@ -118,6 +118,8 @@ pub struct NetworkShuffleExec {
     /// a task to the last NetworkCoalesceExec to read from it, which may or may not be this
     /// instance.
     pub(crate) metrics_collection: Arc<DashMap<TaskKey, Vec<pb::MetricsSet>>>,
+    /// Whether to use optimized shuffle partitioning (1:1 task-partition mapping)
+    pub(crate) optimize_shuffle_partitioning: bool,
 }
 
 impl NetworkShuffleExec {
@@ -131,6 +133,7 @@ impl NetworkShuffleExec {
         num: usize,
         task_count: usize,
         input_task_count: usize,
+        optimize_shuffle_partitioning: bool,
     ) -> Result<Self, DataFusionError> {
         if !matches!(input.output_partitioning(), Partitioning::Hash(_, _)) {
             return plan_err!("NetworkShuffleExec input must be hash partitioned");
@@ -138,16 +141,19 @@ impl NetworkShuffleExec {
 
         let transformed = Arc::clone(&input).transform_down(|plan| {
             if let Some(r_exe) = plan.as_any().downcast_ref::<RepartitionExec>() {
-                // Scale the input RepartitionExec to account for all the tasks to which it will
-                // need to fan data out.
-                let scaled = Arc::new(RepartitionExec::try_new(
-                    require_one_child(r_exe.children())?,
-                    scale_partitioning(r_exe.partitioning(), |p| p * task_count),
-                )?);
+                let scaled = if optimize_shuffle_partitioning {
+                    Arc::new(RepartitionExec::try_new(
+                        require_one_child(r_exe.children())?,
+                        r_exe.partitioning().clone(),
+                    )?)
+                } else {
+                    Arc::new(RepartitionExec::try_new(
+                        require_one_child(r_exe.children())?,
+                        scale_partitioning(r_exe.partitioning(), |p| p * task_count),
+                    )?)
+                };
                 Ok(Transformed::new(scaled, true, TreeNodeRecursion::Stop))
             } else if matches!(plan.output_partitioning(), Partitioning::Hash(_, _)) {
-                // This might be a passthrough node, like a CoalesceBatchesExec or something like that.
-                // This is fine, we can let the node be here.
                 Ok(Transformed::no(plan))
             } else {
                 plan_err!(
@@ -157,6 +163,14 @@ impl NetworkShuffleExec {
             }
         })?;
 
+        let properties = if optimize_shuffle_partitioning {
+            let mut props = input.properties().clone();
+            props.partitioning = Partitioning::UnknownPartitioning(1);
+            props
+        } else {
+            input.properties().clone()
+        };
+
         Ok(Self {
             input_stage: Stage {
                 query_id,
@@ -165,8 +179,9 @@ impl NetworkShuffleExec {
                 tasks: vec![ExecutionTask { url: None }; input_task_count],
             },
             worker_connections: WorkerConnectionPool::new(input_task_count),
-            properties: input.properties().clone(),
+            properties,
             metrics_collection: Default::default(),
+            optimize_shuffle_partitioning,
         })
     }
 }
@@ -230,19 +245,34 @@ impl ExecutionPlan for NetworkShuffleExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream, DataFusionError> {
         let task_context = DistributedTaskContext::from_ctx(&context);
-        let off = self.properties.partitioning.partition_count() * task_context.task_index;
+
+        let (partition_offset, partition_range) = if self.optimize_shuffle_partitioning {
+            let partition_id = task_context.task_index;
+            (partition_id, partition_id..(partition_id + 1))
+        } else {
+            let partition_count = self.properties.partitioning.partition_count();
+            let off = partition_count * task_context.task_index;
+            (off, off..(off + partition_count))
+        };
 
         let mut streams = Vec::with_capacity(self.input_stage.tasks.len());
         for input_task_index in 0..self.input_stage.tasks.len() {
             let worker_connection = self.worker_connections.get_or_init_worker_connection(
                 &self.input_stage,
-                off..(off + self.properties.partitioning.partition_count()),
+                partition_range.clone(),
                 input_task_index,
                 &context,
             )?;
 
             let metrics_collection = Arc::clone(&self.metrics_collection);
-            let stream = worker_connection.stream_partition(off + partition, move |meta| {
+
+            let actual_partition = if self.optimize_shuffle_partitioning {
+                partition_offset
+            } else {
+                partition_offset + partition
+            };
+
+            let stream = worker_connection.stream_partition(actual_partition, move |meta| {
                 if let Some(flight_app_metadata::Content::MetricsCollection(m)) = meta.content {
                     for task_metrics in m.tasks {
                         if let Some(task_key) = task_metrics.task_key {
@@ -262,5 +292,89 @@ impl ExecutionPlan for NetworkShuffleExec {
 
     fn metrics(&self) -> Option<MetricsSet> {
         Some(self.worker_connections.metrics.clone_inner())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use datafusion::arrow::datatypes::{DataType, Field, Schema};
+    use datafusion::physical_expr::expressions::Column;
+    use datafusion::physical_plan::empty::EmptyExec;
+    use datafusion::physical_plan::repartition::RepartitionExec;
+    use uuid::Uuid;
+
+    #[test]
+    fn test_optimized_mode_sets_single_partition() -> datafusion::common::Result<()> {
+        let schema = Arc::new(Schema::new(vec![Field::new("a", DataType::Int32, false)]));
+        let part = Partitioning::Hash(vec![Arc::new(Column::new("a", 0))], 8);
+
+        let repartition = Arc::new(RepartitionExec::try_new(
+            Arc::new(EmptyExec::new(schema.clone())),
+            part.clone(),
+        )?);
+
+        let optimized = NetworkShuffleExec::try_new(
+            repartition.clone(),
+            Uuid::new_v4(),
+            1,
+            8,
+            3,
+            true,
+        )?;
+
+        assert_eq!(optimized.properties.partitioning.partition_count(), 1);
+        assert!(optimized.optimize_shuffle_partitioning);
+
+        let legacy = NetworkShuffleExec::try_new(
+            repartition.clone(),
+            Uuid::new_v4(),
+            1,
+            2,
+            3,
+            false,
+        )?;
+
+        assert_eq!(legacy.properties.partitioning.partition_count(), 8);
+        assert!(!legacy.optimize_shuffle_partitioning);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_optimized_mode_no_partition_inflation() -> datafusion::common::Result<()> {
+        let schema = Arc::new(Schema::new(vec![Field::new("b", DataType::Int32, false)]));
+        let part = Partitioning::Hash(vec![Arc::new(Column::new("b", 0))], 4);
+
+        let repartition = Arc::new(RepartitionExec::try_new(
+            Arc::new(EmptyExec::new(schema.clone())),
+            part.clone(),
+        )?);
+
+        let optimized = NetworkShuffleExec::try_new(
+            repartition.clone(),
+            Uuid::new_v4(),
+            1,
+            4,
+            2,
+            true,
+        )?;
+
+        let input_plan = optimized.input_stage.plan.as_ref().unwrap();
+        assert_eq!(input_plan.output_partitioning().partition_count(), 4);
+
+        let legacy = NetworkShuffleExec::try_new(
+            repartition,
+            Uuid::new_v4(),
+            1,
+            4,
+            2,
+            false,
+        )?;
+
+        let input_plan = legacy.input_stage.plan.as_ref().unwrap();
+        assert_eq!(input_plan.output_partitioning().partition_count(), 16);
+
+        Ok(())
     }
 }

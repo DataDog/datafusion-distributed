@@ -437,6 +437,7 @@ fn new_network_hash_shuffle_exec(
         worker_connections: WorkerConnectionPool::new(input_stage.tasks.len()),
         input_stage,
         metrics_collection: Default::default(),
+        optimize_shuffle_partitioning: false,
     }
 }
 

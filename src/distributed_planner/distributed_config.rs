@@ -45,6 +45,8 @@ extensions_options! {
         /// use broadcasting like checking build side size.
         /// For now, broadcasting all CollectLeft joins is not always beneficial.
         pub broadcast_joins: bool, default = false
+        /// Use 1:1 task-partition mapping instead of N*M fanout, eliminating partition inflation.
+        pub optimize_shuffle_partitioning: bool, default = false
         /// The compression used for sending data over the network between workers.
         /// It can be set to either `zstd`, `lz4` or `none`.
         pub compression: String, default = "lz4".to_string()
