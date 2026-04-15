@@ -118,12 +118,27 @@ pub(crate) fn base_session_builder(
     num_workers: usize,
     broadcast_enabled: bool,
 ) -> SessionStateBuilder {
+    base_session_builder_with_shuffle_optimization(
+        target_partitions,
+        num_workers,
+        broadcast_enabled,
+        false,
+    )
+}
+
+pub(crate) fn base_session_builder_with_shuffle_optimization(
+    target_partitions: usize,
+    num_workers: usize,
+    broadcast_enabled: bool,
+    optimize_shuffle_partitioning: bool,
+) -> SessionStateBuilder {
     let mut config = SessionConfig::new()
         .with_target_partitions(target_partitions)
         .with_information_schema(true);
 
     let d_cfg = DistributedConfig {
         broadcast_joins: broadcast_enabled,
+        optimize_shuffle_partitioning,
         ..Default::default()
     };
     config.set_distributed_option_extension(d_cfg);
