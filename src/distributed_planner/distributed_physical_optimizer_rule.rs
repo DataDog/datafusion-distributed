@@ -121,13 +121,20 @@ fn distribute_plan(
 
             let child_plan = require_one_child(new_children)?;
 
+            // Only use optimized shuffle when the annotated task_count matches the upstream
+            // partition count exactly — meaning the annotator determined the optimization was
+            // beneficial (cardinality estimate <= partition count). Otherwise fall back to
+            // non-optimized to preserve downstream parallelism.
+            let use_optimized = d_cfg.optimize_shuffle_partitioning
+                && task_count == child_plan.output_partitioning().partition_count();
+
             let node = Arc::new(NetworkShuffleExec::try_new(
                 child_plan,
                 query_id,
                 *stage_id,
                 task_count,
                 max_child_task_count.unwrap_or(1),
-                d_cfg.optimize_shuffle_partitioning,
+                use_optimized,
             )?);
             stage_id.add_assign(1);
             Ok(node)
