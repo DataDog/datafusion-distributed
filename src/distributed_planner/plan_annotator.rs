@@ -392,13 +392,19 @@ fn _annotate_plan(
         // ID to fetch from the upstream stage. This requires downstream task count == upstream
         // partition count. Override the cardinality-derived downstream task count here to enforce
         // that invariant so stage scheduling spawns the right number of tasks.
+        //
+        // Only apply when the cardinality-derived task count does not exceed the upstream partition
+        // count. If cardinality says more tasks are needed (high-volume stages), fall back to
+        // non-optimized so parallelism is preserved.
         if d_cfg.optimize_shuffle_partitioning {
             if let PlanOrNetworkBoundary::Shuffle = &annotation.plan_or_nb {
                 if let Some(PlanOrNetworkBoundary::Plan(repartition)) =
                     annotation.children.first().map(|c| &c.plan_or_nb)
                 {
                     let partition_count = repartition.output_partitioning().partition_count();
-                    annotation.task_count = Desired(partition_count);
+                    if annotation.task_count.as_usize() <= partition_count {
+                        annotation.task_count = Desired(partition_count);
+                    }
                 }
             }
         }
