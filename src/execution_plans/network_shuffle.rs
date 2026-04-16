@@ -203,17 +203,11 @@ impl DisplayAs for NetworkShuffleExec {
         let input_tasks = self.input_stage.tasks.len();
         let partitions = self.properties.partitioning.partition_count();
         let stage = self.input_stage.num;
-        if self.optimize_shuffle_partitioning {
-            write!(
-                f,
-                "[Stage {stage}] => NetworkShuffleExec: output_partitions={partitions}, input_tasks={input_tasks}, optimized=true",
-            )
-        } else {
-            write!(
-                f,
-                "[Stage {stage}] => NetworkShuffleExec: output_partitions={partitions}, input_tasks={input_tasks}",
-            )
-        }
+        let optimized = self.optimize_shuffle_partitioning;
+        write!(
+            f,
+            "[Stage {stage}] => NetworkShuffleExec: output_partitions={partitions}, input_tasks={input_tasks}, optimized={optimized}",
+        )
     }
 }
 

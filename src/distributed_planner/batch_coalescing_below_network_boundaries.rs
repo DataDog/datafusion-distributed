@@ -87,7 +87,7 @@ mod tests {
         └──────────────────────────────────────────────────
           ┌───── Stage 2 ── Tasks: t0:[p0..p3] t1:[p0..p3] 
           │ AggregateExec: mode=FinalPartitioned, gby=[RainToday@0 as RainToday, WindGustDir@1 as WindGustDir], aggr=[]
-          │   [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3
+          │   [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3, optimized=false
           └──────────────────────────────────────────────────
             ┌───── Stage 1 ── Tasks: t0:[p0..p7] t1:[p0..p7] t2:[p0..p7] 
             │ RepartitionExec: partitioning=Hash([RainToday@0, WindGustDir@1], 8), input_partitions=4
@@ -115,7 +115,7 @@ mod tests {
         └──────────────────────────────────────────────────
           ┌───── Stage 2 ── Tasks: t0:[p0..p3] t1:[p0..p3] 
           │ AggregateExec: mode=FinalPartitioned, gby=[RainToday@0 as RainToday, WindGustDir@1 as WindGustDir], aggr=[]
-          │   [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3
+          │   [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3, optimized=false
           └──────────────────────────────────────────────────
             ┌───── Stage 1 ── Tasks: t0:[p0..p7] t1:[p0..p7] t2:[p0..p7] 
             │ RepartitionExec: partitioning=Hash([RainToday@0, WindGustDir@1], 8), input_partitions=4
@@ -144,7 +144,7 @@ mod tests {
           ┌───── Stage 2 ── Tasks: t0:[p0..p3] t1:[p0..p3] 
           │ CoalesceBatchesExec: target_batch_size=101
           │   AggregateExec: mode=FinalPartitioned, gby=[RainToday@0 as RainToday, WindGustDir@1 as WindGustDir], aggr=[]
-          │     [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3
+          │     [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3, optimized=false
           └──────────────────────────────────────────────────
             ┌───── Stage 1 ── Tasks: t0:[p0..p7] t1:[p0..p7] t2:[p0..p7] 
             │ CoalesceBatchesExec: target_batch_size=101
