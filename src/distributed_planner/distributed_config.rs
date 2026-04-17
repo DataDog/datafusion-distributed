@@ -47,6 +47,11 @@ extensions_options! {
         pub broadcast_joins: bool, default = false
         /// Use 1:1 task-partition mapping instead of N*M fanout, eliminating partition inflation.
         pub optimize_shuffle_partitioning: bool, default = false
+        /// Scale factor controlling when optimized shuffle partitioning is applied at a boundary.
+        /// The optimization is applied when cardinality_task_count <= partition_count * ratio.
+        /// A ratio of 1.0 (default) only optimizes when task count <= partition count exactly.
+        /// A ratio > 1.0 also optimizes when task count is slightly above partition count.
+        pub optimize_shuffle_partitioning_ratio: f64, default = 1.0
         /// The compression used for sending data over the network between workers.
         /// It can be set to either `zstd`, `lz4` or `none`.
         pub compression: String, default = "lz4".to_string()

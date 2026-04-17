@@ -402,7 +402,8 @@ fn _annotate_plan(
                     annotation.children.first().map(|c| &c.plan_or_nb)
                 {
                     let partition_count = repartition.output_partitioning().partition_count();
-                    if annotation.task_count.as_usize() <= partition_count {
+                    let threshold = (partition_count as f64 * d_cfg.optimize_shuffle_partitioning_ratio).ceil() as usize;
+                    if annotation.task_count.as_usize() <= threshold {
                         annotation.task_count = Desired(partition_count);
                     }
                 }
