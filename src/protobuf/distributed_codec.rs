@@ -78,6 +78,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                 schema,
                 partitioning,
                 input_stage,
+                optimize_shuffle_partitioning,
             }) => {
                 let schema: Schema = schema
                     .as_ref()
@@ -96,6 +97,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     partitioning,
                     Arc::new(schema),
                     parse_stage_proto(input_stage, inputs)?,
+                    optimize_shuffle_partitioning,
                 )))
             }
             DistributedExecNode::NetworkCoalesceTasks(NetworkCoalesceExecProto {
@@ -237,6 +239,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     &DistributedCodec {},
                 )?),
                 input_stage: Some(encode_stage_proto(node.input_stage())?),
+                optimize_shuffle_partitioning: node.optimize_shuffle_partitioning,
             };
 
             let wrapper = DistributedExecProto {
@@ -385,6 +388,8 @@ pub struct NetworkShuffleExecProto {
     partitioning: Option<protobuf::Partitioning>,
     #[prost(message, optional, tag = "3")]
     input_stage: Option<StageProto>,
+    #[prost(bool, tag = "4")]
+    optimize_shuffle_partitioning: bool,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -415,6 +420,7 @@ fn new_network_hash_shuffle_exec(
     partitioning: Partitioning,
     schema: SchemaRef,
     input_stage: Stage,
+    optimize_shuffle_partitioning: bool,
 ) -> NetworkShuffleExec {
     NetworkShuffleExec {
         properties: PlanProperties::new(
@@ -426,6 +432,7 @@ fn new_network_hash_shuffle_exec(
         worker_connections: WorkerConnectionPool::new(input_stage.tasks.len()),
         input_stage,
         metrics_collection: Default::default(),
+        optimize_shuffle_partitioning,
     }
 }
 
@@ -565,7 +572,7 @@ mod tests {
         let schema = schema_i32("a");
         let part = Partitioning::Hash(vec![Arc::new(Column::new("a", 0))], 4);
         let plan: Arc<dyn ExecutionPlan> =
-            Arc::new(new_network_hash_shuffle_exec(part, schema, dummy_stage()));
+            Arc::new(new_network_hash_shuffle_exec(part, schema, dummy_stage(), false));
 
         let mut buf = Vec::new();
         codec.try_encode(plan.clone(), &mut buf)?;
@@ -586,6 +593,7 @@ mod tests {
             Partitioning::UnknownPartitioning(1),
             schema,
             dummy_stage(),
+            false,
         ));
 
         let plan: Arc<dyn ExecutionPlan> = Arc::new(PartitionIsolatorExec::new(flight.clone(), 1));
@@ -609,11 +617,13 @@ mod tests {
             Partitioning::RoundRobinBatch(2),
             schema.clone(),
             dummy_stage(),
+            false,
         ));
         let right = Arc::new(new_network_hash_shuffle_exec(
             Partitioning::RoundRobinBatch(2),
             schema.clone(),
             dummy_stage(),
+            false,
         ));
 
         let union = UnionExec::try_new(vec![left.clone(), right.clone()])?;
@@ -638,6 +648,7 @@ mod tests {
             Partitioning::UnknownPartitioning(1),
             schema.clone(),
             dummy_stage(),
+            false,
         ));
 
         let sort_expr = PhysicalSortExpr {
@@ -743,11 +754,13 @@ mod tests {
             Partitioning::RoundRobinBatch(2),
             schema.clone(),
             dummy_stage(),
+            false,
         )) as Arc<dyn ExecutionPlan>;
         let right = Arc::new(new_network_hash_shuffle_exec(
             Partitioning::RoundRobinBatch(2),
             schema.clone(),
             dummy_stage(),
+            false,
         )) as Arc<dyn ExecutionPlan>;
 
         let plan: Arc<dyn ExecutionPlan> =

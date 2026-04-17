@@ -5,6 +5,7 @@ use datafusion::common::{DataFusionError, plan_datafusion_err};
 use datafusion::config::ConfigOptions;
 use datafusion::physical_expr::Partitioning;
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::physical_plan::ExecutionPlanProperties;
 use datafusion::physical_plan::coalesce_partitions::CoalescePartitionsExec;
 use datafusion::physical_plan::execution_plan::CardinalityEffect;
 use datafusion::physical_plan::joins::{HashJoinExec, PartitionMode};
@@ -386,6 +387,42 @@ fn _annotate_plan(
         );
         let prev_task_count = annotation.task_count.as_usize() as f64;
         annotation.task_count = Desired((prev_task_count * sf).ceil() as usize);
+
+        // In optimized shuffle mode, NetworkShuffleExec uses task_index directly as the partition
+        // ID to fetch from the upstream stage. This requires downstream task count == upstream
+        // partition count. Override the cardinality-derived downstream task count here to enforce
+        // that invariant so stage scheduling spawns the right number of tasks.
+        //
+        // The optimize_shuffle_partitioning_ratio scales the task count at shuffle boundaries.
+        // capped = ceil(partition_count * ratio), minimum 1.
+        // - ratio >= 1.0: clamp(cardinality, partition_count, capped)
+        //     - cardinality < p → lifted to p (optimized 1:1 mapping)
+        //     - p <= cardinality <= capped → kept as-is
+        //     - cardinality > capped → reduced to capped (between p and p*N)
+        //     - ratio=1 always produces p tasks (fully optimized)
+        // - ratio < 1.0: cardinality.min(capped) — scales down below p, no floor
+        if d_cfg.optimize_shuffle_partitioning {
+            if let PlanOrNetworkBoundary::Shuffle = &annotation.plan_or_nb {
+                if let Some(PlanOrNetworkBoundary::Plan(repartition)) =
+                    annotation.children.first().map(|c| &c.plan_or_nb)
+                {
+                    let ratio = d_cfg.optimize_shuffle_partitioning_ratio;
+                    let partition_count = repartition.output_partitioning().partition_count();
+                    let capped = ((partition_count as f64 * ratio).ceil() as usize).max(1);
+                    let cardinality = annotation.task_count.as_usize();
+                    let new_task_count = if ratio >= 1.0 {
+                        // Clamp always applies: lifts below p, caps above capped.
+                        // ratio=1 → task_count=p (optimized). ratio>1 → between p and p*ratio.
+                        cardinality.max(partition_count).min(capped)
+                    } else {
+                        // Scale down below p. No floor — ratio=0.5 → max p/2 tasks.
+                        cardinality.min(capped)
+                    };
+                    annotation.task_count = Desired(new_task_count);
+                }
+            }
+        }
+
         Ok(annotation)
     } else if root {
         // If this is the root node, it means that we have just finished annotating nodes for the
