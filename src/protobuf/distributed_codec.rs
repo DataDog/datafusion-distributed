@@ -723,6 +723,7 @@ mod tests {
             part,
             schema,
             dummy_stage_with_plan(),
+            false,
         ));
 
         let mut buf = Vec::new();

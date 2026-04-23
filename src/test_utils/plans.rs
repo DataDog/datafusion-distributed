@@ -5,8 +5,9 @@ use crate::execution_plans::DistributedExec;
 use crate::stage::Stage;
 use crate::test_utils::in_memory_channel_resolver::InMemoryWorkerResolver;
 use crate::worker::generated::worker::TaskKey;
+use crate::DistributedConfig;
 #[cfg(test)]
-use crate::{DistributedConfig, TaskEstimation, TaskEstimator};
+use crate::{TaskEstimation, TaskEstimator};
 #[cfg(test)]
 use datafusion::config::ConfigOptions;
 use datafusion::{

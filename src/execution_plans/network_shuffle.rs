@@ -164,9 +164,9 @@ impl NetworkShuffleExec {
         })?;
 
         let properties = if optimize_shuffle_partitioning {
-            let mut props = input.properties().clone();
+            let mut props = input.properties().as_ref().clone();
             props.partitioning = Partitioning::UnknownPartitioning(1);
-            props
+            Arc::new(props)
         } else {
             input.properties().clone()
         };
