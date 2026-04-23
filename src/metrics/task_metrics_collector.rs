@@ -409,6 +409,93 @@ mod tests {
         }
     }
 
+    /// Tests whether metrics are lost when a HashJoin short-circuits due to an empty build side.
+    ///
+    /// Issue: https://github.com/datafusion-contrib/datafusion-distributed/issues/412
+    ///
+    /// When the build side of a distributed HashJoin returns zero rows, DataFusion's
+    /// HashJoinExec detects this and short-circuits: it never polls the probe side stream.
+    /// The probe side's flight streams are therefore dropped via `on_drop_stream` without ever
+    /// sending the last FlightData message that carries metrics. As a result:
+    ///   - `metrics_collection` has no entry for the probe-side stage
+    ///   - `stage_metrics_rewriter` returns an error ("missing metrics for task N in stage M")
+    ///   - `rewrite_distributed_plan_with_metrics` falls back to the skeleton plan
+    ///   - connector metrics (scanned rows, bytes, etc.) are missing from logs
+    ///
+    /// `weather` is the left (build) side; `flights_1m` is the right (probe) side.
+    /// The filter `"RainToday" = '__nonexistent__'` is not constant-foldable at planning time
+    /// (DataFusion doesn't know the actual data values), so the HashJoin is kept in the plan.
+    /// At runtime the build side returns 0 rows, triggering the short-circuit. The probe side
+    /// (`flights_1m`) is large enough that its worker is still producing data when dropped.
+    ///
+    /// This test is ignored because it demonstrates a known bug. Un-ignore it to reproduce
+    /// the issue or to verify a fix.
+    #[tokio::test]
+    #[ignore]
+    async fn test_metrics_collection_with_hashjoin_empty_build_side() {
+        let ctx = make_test_ctx().await;
+        register_parquet_tables(&ctx).await.unwrap();
+
+        // Both sides are aggregated before the join, which forces both through a network shuffle
+        // so that the probe side (flights_1m agg) lives in its own distributed stage.
+        // The filter value '__nonexistent__' matches no rows at runtime on the weather (left/build)
+        // side but cannot be constant-folded at planning time. HashJoinExec sees an empty build
+        // and short-circuits without polling the probe stage, whose flight streams get dropped.
+        let sql = r#"SELECT w.rain, f.date, w.cnt, f.cnt
+            FROM (
+                SELECT "RainToday" AS rain, COUNT(*) as cnt
+                FROM weather
+                WHERE "RainToday" = '__nonexistent__'
+                GROUP BY "RainToday"
+            ) w
+            JOIN (
+                SELECT "FL_DATE" AS date, COUNT(*) as cnt
+                FROM flights_1m
+                GROUP BY "FL_DATE"
+            ) f ON w.rain = CAST(f.date AS VARCHAR)"#;
+
+        let df = ctx.sql(sql).await.unwrap();
+        let plan = df.create_physical_plan().await.unwrap();
+
+        let dist_exec = plan
+            .as_any()
+            .downcast_ref::<DistributedExec>()
+            .expect("expected DistributedExec");
+
+        let (stages, expected_task_keys) = get_stages_and_task_keys(dist_exec);
+        assert!(
+            expected_task_keys.len() > 1,
+            "expected more than 1 task key. Plan was not distributed:\n{}",
+            DisplayableExecutionPlan::new(plan.as_ref()).indent(true)
+        );
+
+        execute_plan(plan.clone(), &ctx).await;
+
+        let collector = TaskMetricsCollector::new();
+        let result = collector.collect(dist_exec.plan.clone()).unwrap();
+
+        for expected_task_key in expected_task_keys {
+            let actual_metrics = result
+                .input_task_metrics
+                .get(&expected_task_key)
+                .unwrap_or_else(|| {
+                    panic!(
+                        "Missing metrics for task key {expected_task_key:?}. \
+                         The HashJoin empty-build-side short-circuit caused the probe-side \
+                         flight stream to be dropped before the worker sent metrics."
+                    )
+                });
+
+            let stage = stages.get(&(expected_task_key.stage_id as usize)).unwrap();
+            let stage_plan = stage.plan.as_ref().unwrap();
+            assert_eq!(
+                actual_metrics.len(),
+                count_plan_nodes_up_to_network_boundary(stage_plan),
+                "Mismatch between collected metrics and actual nodes for {expected_task_key:?}"
+            );
+        }
+    }
+
     /// Test that verifies PartitionIsolatorExec nodes are preserved during metrics collection.
     /// This tests the corner case where PartitionIsolatorExec nodes (which have no metrics)
     /// must still be included in the metrics collection to maintain correct node-to-metric mapping.
