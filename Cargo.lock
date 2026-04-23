@@ -1110,7 +1110,7 @@ dependencies = [
  "tokio-stream",
  "tonic",
  "tower",
- "tpchgen",
+ "tpchgen 2.0.2",
  "tpchgen-arrow",
  "url",
  "uuid",
@@ -3479,12 +3479,17 @@ version = "2.0.1"
 source = "git+https://github.com/clflushopt/tpchgen-rs?rev=482ee68#482ee68404d61a5308ca1fd0095b347b3831a5b4"
 
 [[package]]
+name = "tpchgen"
+version = "2.0.2"
+source = "git+https://github.com/clflushopt/tpchgen-rs?rev=31d515c4a2c16a8d434b2c80c197a78d9e64e8b6#31d515c4a2c16a8d434b2c80c197a78d9e64e8b6"
+
+[[package]]
 name = "tpchgen-arrow"
 version = "2.0.1"
 source = "git+https://github.com/clflushopt/tpchgen-rs?rev=482ee68#482ee68404d61a5308ca1fd0095b347b3831a5b4"
 dependencies = [
  "arrow",
- "tpchgen",
+ "tpchgen 2.0.1",
 ]
 
 [[package]]
