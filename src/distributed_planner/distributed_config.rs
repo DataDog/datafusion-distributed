@@ -45,9 +45,21 @@ extensions_options! {
         /// use broadcasting like checking build side size.
         /// For now, broadcasting all CollectLeft joins is not always beneficial.
         pub broadcast_joins: bool, default = false
+        /// Use 1:1 task-partition mapping instead of N*M fanout, eliminating partition inflation.
+        pub optimize_shuffle_partitioning: bool, default = false
+        /// Scale factor controlling when optimized shuffle partitioning is applied at a boundary.
+        /// The optimization is applied when cardinality_task_count <= partition_count * ratio.
+        /// A ratio of 1.0 (default) only optimizes when task count <= partition count exactly.
+        /// A ratio > 1.0 also optimizes when task count is slightly above partition count.
+        pub optimize_shuffle_partitioning_ratio: f64, default = 1.0
         /// The compression used for sending data over the network between workers.
         /// It can be set to either `zstd`, `lz4` or `none`.
         pub compression: String, default = "lz4".to_string()
+        /// Size of the bounded mpsc channel used in `spawn_select_all` to merge N partition
+        /// streams into one gRPC response stream. With only 2 slots and N SpawnedTasks competing,
+        /// any brief gRPC/HTTP2 stall freezes the entire pipeline. Increase this experimentally
+        /// to measure the impact of the channel stall. Default is 2 to preserve existing behavior.
+        pub record_batch_buffer_size: usize, default = 2
         /// Maximum tasks that will be assigned per stage during distributed planning.
         /// If set to 0, this value is the number of workers returned by the provided `WorkerResolver`.
         /// It defaults to 0.

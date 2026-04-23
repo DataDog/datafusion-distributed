@@ -118,12 +118,23 @@ fn distribute_plan(
             if task_count == 1 && max_child_task_count == Some(1) {
                 return require_one_child(new_children);
             }
+
+            let child_plan = require_one_child(new_children)?;
+
+            // Only use optimized shuffle when the annotated task_count matches the upstream
+            // partition count exactly — meaning the annotator determined the optimization was
+            // beneficial (cardinality estimate <= partition count). Otherwise fall back to
+            // non-optimized to preserve downstream parallelism.
+            let use_optimized = d_cfg.optimize_shuffle_partitioning
+                && task_count == child_plan.output_partitioning().partition_count();
+
             let node = Arc::new(NetworkShuffleExec::try_new(
-                require_one_child(new_children)?,
+                child_plan,
                 query_id,
                 *stage_id,
                 task_count,
                 max_child_task_count.unwrap_or(1),
+                use_optimized,
             )?);
             stage_id.add_assign(1);
             Ok(node)
@@ -237,7 +248,7 @@ mod tests {
           │ SortExec: expr=[count(*)@0 ASC NULLS LAST], preserve_partitioning=[true]
           │   ProjectionExec: expr=[count(Int64(1))@1 as count(*), RainToday@0 as RainToday, count(Int64(1))@1 as count(Int64(1))]
           │     AggregateExec: mode=FinalPartitioned, gby=[RainToday@0 as RainToday], aggr=[count(Int64(1))]
-          │       [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3
+          │       [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3, optimized=false
           └──────────────────────────────────────────────────
             ┌───── Stage 1 ── Tasks: t0:[p0..p7] t1:[p0..p7] t2:[p0..p7] 
             │ RepartitionExec: partitioning=Hash([RainToday@0], 8), input_partitions=1
@@ -267,7 +278,7 @@ mod tests {
           │ SortExec: expr=[count(*)@0 ASC NULLS LAST], preserve_partitioning=[true]
           │   ProjectionExec: expr=[count(Int64(1))@1 as count(*), RainToday@0 as RainToday, count(Int64(1))@1 as count(Int64(1))]
           │     AggregateExec: mode=FinalPartitioned, gby=[RainToday@0 as RainToday], aggr=[count(Int64(1))]
-          │       [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=2
+          │       [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=2, optimized=false
           └──────────────────────────────────────────────────
             ┌───── Stage 1 ── Tasks: t0:[p0..p7] t1:[p0..p7] 
             │ RepartitionExec: partitioning=Hash([RainToday@0], 8), input_partitions=2
@@ -317,7 +328,7 @@ mod tests {
         │     SortExec: expr=[count(*)@0 ASC NULLS LAST], preserve_partitioning=[true]
         │       ProjectionExec: expr=[count(Int64(1))@1 as count(*), RainToday@0 as RainToday, count(Int64(1))@1 as count(Int64(1))]
         │         AggregateExec: mode=FinalPartitioned, gby=[RainToday@0 as RainToday], aggr=[count(Int64(1))]
-        │           [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3
+        │           [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3, optimized=false
         └──────────────────────────────────────────────────
           ┌───── Stage 1 ── Tasks: t0:[p0..p3] t1:[p0..p3] t2:[p0..p3] 
           │ RepartitionExec: partitioning=Hash([RainToday@0], 4), input_partitions=1
@@ -370,7 +381,7 @@ mod tests {
           │ SortExec: expr=[count(*)@0 ASC NULLS LAST], preserve_partitioning=[true]
           │   ProjectionExec: expr=[count(Int64(1))@1 as count(*), RainToday@0 as RainToday, count(Int64(1))@1 as count(Int64(1))]
           │     AggregateExec: mode=FinalPartitioned, gby=[RainToday@0 as RainToday], aggr=[count(Int64(1))]
-          │       [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3
+          │       [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3, optimized=false
           └──────────────────────────────────────────────────
             ┌───── Stage 1 ── Tasks: t0:[p0..p7] t1:[p0..p7] t2:[p0..p7] 
             │ RepartitionExec: partitioning=Hash([RainToday@0], 8), input_partitions=1
@@ -435,12 +446,12 @@ mod tests {
         │       [Stage 2] => NetworkCoalesceExec: output_partitions=8, input_tasks=2
         │     ProjectionExec: expr=[avg(weather.MaxTemp)@1 as MaxTemp, RainTomorrow@0 as RainTomorrow]
         │       AggregateExec: mode=FinalPartitioned, gby=[RainTomorrow@0 as RainTomorrow], aggr=[avg(weather.MaxTemp)]
-        │         [Stage 3] => NetworkShuffleExec: output_partitions=4, input_tasks=3
+        │         [Stage 3] => NetworkShuffleExec: output_partitions=4, input_tasks=3, optimized=false
         └──────────────────────────────────────────────────
           ┌───── Stage 2 ── Tasks: t0:[p0..p3] t1:[p0..p3] 
           │ ProjectionExec: expr=[avg(weather.MinTemp)@1 as MinTemp, RainTomorrow@0 as RainTomorrow]
           │   AggregateExec: mode=FinalPartitioned, gby=[RainTomorrow@0 as RainTomorrow], aggr=[avg(weather.MinTemp)]
-          │     [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3
+          │     [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3, optimized=false
           └──────────────────────────────────────────────────
             ┌───── Stage 1 ── Tasks: t0:[p0..p7] t1:[p0..p7] t2:[p0..p7] 
             │ RepartitionExec: partitioning=Hash([RainTomorrow@0], 8), input_partitions=4
@@ -499,7 +510,7 @@ mod tests {
         └──────────────────────────────────────────────────
           ┌───── Stage 2 ── Tasks: t0:[p0..p3] t1:[p0..p3] 
           │ AggregateExec: mode=FinalPartitioned, gby=[RainToday@0 as RainToday, WindGustDir@1 as WindGustDir], aggr=[]
-          │   [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3
+          │   [Stage 1] => NetworkShuffleExec: output_partitions=4, input_tasks=3, optimized=false
           └──────────────────────────────────────────────────
             ┌───── Stage 1 ── Tasks: t0:[p0..p7] t1:[p0..p7] t2:[p0..p7] 
             │ RepartitionExec: partitioning=Hash([RainToday@0, WindGustDir@1], 8), input_partitions=1
@@ -962,5 +973,98 @@ mod tests {
         } else {
             format!("{}", displayable(physical_plan.as_ref()).indent(true))
         }
+    }
+
+    async fn sql_to_explain_optimized(
+        query: &str,
+        num_workers: usize,
+    ) -> String {
+        use crate::test_utils::plans::base_session_builder_with_shuffle_optimization;
+
+        let target_partitions = 4;
+        let mut builder = base_session_builder_with_shuffle_optimization(
+            target_partitions,
+            num_workers,
+            false,
+            true,
+        );
+
+        builder = builder.with_physical_optimizer_rule(Arc::new(DistributedPhysicalOptimizerRule));
+
+        let (ctx, query) = context_with_query(builder, query).await;
+        let df = ctx.sql(&query).await.unwrap();
+        let physical_plan = df.create_physical_plan().await.unwrap();
+
+        display_plan_ascii(physical_plan.as_ref(), false)
+    }
+
+    #[tokio::test]
+    async fn test_aggregation_optimized() {
+        let query = r#"
+        SELECT count(*), "RainToday" FROM weather GROUP BY "RainToday" ORDER BY count(*)
+        "#;
+        let plan = sql_to_explain_optimized(query, 3).await;
+        assert_snapshot!(plan, @r"
+        ┌───── DistributedExec ── Tasks: t0:[p0]
+        │ ProjectionExec: expr=[count(*)@0 as count(*), RainToday@1 as RainToday]
+        │   SortPreservingMergeExec: [count(Int64(1))@2 ASC NULLS LAST]
+        │     [Stage 2] => NetworkCoalesceExec: output_partitions=4, input_tasks=4
+        └──────────────────────────────────────────────────
+          ┌───── Stage 2 ── Tasks: t0:[p0] t1:[p1] t2:[p2] t3:[p3]
+          │ SortExec: expr=[count(*)@0 ASC NULLS LAST], preserve_partitioning=[true]
+          │   ProjectionExec: expr=[count(Int64(1))@1 as count(*), RainToday@0 as RainToday, count(Int64(1))@1 as count(Int64(1))]
+          │     AggregateExec: mode=FinalPartitioned, gby=[RainToday@0 as RainToday], aggr=[count(Int64(1))]
+          │       [Stage 1] => NetworkShuffleExec: output_partitions=1, input_tasks=3, optimized=true
+          └──────────────────────────────────────────────────
+            ┌───── Stage 1 ── Tasks: t0:[p0..p3] t1:[p0..p3] t2:[p0..p3]
+            │ RepartitionExec: partitioning=Hash([RainToday@0], 4), input_partitions=1
+            │   AggregateExec: mode=Partial, gby=[RainToday@0 as RainToday], aggr=[count(Int64(1))]
+            │     PartitionIsolatorExec: t0:[p0,__,__] t1:[__,p0,__] t2:[__,__,p0]
+            │       DataSourceExec: file_groups={3 groups: [[/testdata/weather/result-000000.parquet], [/testdata/weather/result-000001.parquet], [/testdata/weather/result-000002.parquet]]}, projection=[RainToday], file_type=parquet
+            └──────────────────────────────────────────────────
+        ");
+    }
+
+    #[tokio::test]
+    async fn test_distinct_optimized() {
+        let query = r#"
+        SELECT DISTINCT "RainToday", "WindGustDir" FROM weather
+        "#;
+        let plan = sql_to_explain_optimized(query, 3).await;
+        assert_snapshot!(plan, @r"
+        ┌───── DistributedExec ── Tasks: t0:[p0]
+        │ CoalescePartitionsExec
+        │   [Stage 2] => NetworkCoalesceExec: output_partitions=4, input_tasks=4
+        └──────────────────────────────────────────────────
+          ┌───── Stage 2 ── Tasks: t0:[p0] t1:[p1] t2:[p2] t3:[p3]
+          │ AggregateExec: mode=FinalPartitioned, gby=[RainToday@0 as RainToday, WindGustDir@1 as WindGustDir], aggr=[]
+          │   [Stage 1] => NetworkShuffleExec: output_partitions=1, input_tasks=3, optimized=true
+          └──────────────────────────────────────────────────
+            ┌───── Stage 1 ── Tasks: t0:[p0..p3] t1:[p0..p3] t2:[p0..p3]
+            │ RepartitionExec: partitioning=Hash([RainToday@0, WindGustDir@1], 4), input_partitions=1
+            │   AggregateExec: mode=Partial, gby=[RainToday@0 as RainToday, WindGustDir@1 as WindGustDir], aggr=[]
+            │     PartitionIsolatorExec: t0:[p0,__,__] t1:[__,p0,__] t2:[__,__,p0]
+            │       DataSourceExec: file_groups={3 groups: [[/testdata/weather/result-000000.parquet], [/testdata/weather/result-000001.parquet], [/testdata/weather/result-000002.parquet]]}, projection=[RainToday, WindGustDir], file_type=parquet
+            └──────────────────────────────────────────────────
+        ");
+    }
+
+    #[tokio::test]
+    async fn test_sort_optimized() {
+        let query = r#"
+        SELECT * FROM weather ORDER BY "MinTemp" DESC
+        "#;
+        let plan = sql_to_explain_optimized(query, 3).await;
+        assert_snapshot!(plan, @r"
+        ┌───── DistributedExec ── Tasks: t0:[p0]
+        │ SortPreservingMergeExec: [MinTemp@0 DESC]
+        │   [Stage 1] => NetworkCoalesceExec: output_partitions=3, input_tasks=3
+        └──────────────────────────────────────────────────
+          ┌───── Stage 1 ── Tasks: t0:[p0] t1:[p1] t2:[p2]
+          │ SortExec: expr=[MinTemp@0 DESC], preserve_partitioning=[true]
+          │   PartitionIsolatorExec: t0:[p0,__,__] t1:[__,p0,__] t2:[__,__,p0]
+          │     DataSourceExec: file_groups={3 groups: [[/testdata/weather/result-000000.parquet], [/testdata/weather/result-000001.parquet], [/testdata/weather/result-000002.parquet]]}, projection=[MinTemp, MaxTemp, Rainfall, Evaporation, Sunshine, WindGustDir, WindGustSpeed, WindDir9am, WindDir3pm, WindSpeed9am, WindSpeed3pm, Humidity9am, Humidity3pm, Pressure9am, Pressure3pm, Cloud9am, Cloud3pm, Temp9am, Temp3pm, RainToday, RISK_MM, RainTomorrow], file_type=parquet
+          └──────────────────────────────────────────────────
+        ");
     }
 }

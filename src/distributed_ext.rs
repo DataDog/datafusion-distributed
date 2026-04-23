@@ -455,6 +455,32 @@ pub trait DistributedExt: Sized {
     /// Same as [DistributedExt::with_distributed_broadcast_joins_enabled] but with an in-place mutation.
     fn set_distributed_broadcast_joins(&mut self, enabled: bool) -> Result<(), DataFusionError>;
 
+    /// Enables or disables optimized shuffle partitioning (1:1 task-partition mapping).
+    /// When enabled, eliminates N×M partition inflation during network shuffles.
+    fn with_distributed_optimize_shuffle_partitioning(
+        self,
+        enabled: bool,
+    ) -> Result<Self, DataFusionError>;
+
+    /// Same as [DistributedExt::with_distributed_optimize_shuffle_partitioning] but with an in-place mutation.
+    fn set_distributed_optimize_shuffle_partitioning(
+        &mut self,
+        enabled: bool,
+    ) -> Result<(), DataFusionError>;
+
+    /// Scale factor controlling when optimized shuffle partitioning is applied at a boundary.
+    /// The optimization is applied when cardinality_task_count <= partition_count * ratio.
+    fn with_distributed_optimize_shuffle_partitioning_ratio(
+        self,
+        ratio: f64,
+    ) -> Result<Self, DataFusionError>;
+
+    /// Same as [DistributedExt::with_distributed_optimize_shuffle_partitioning_ratio] but with an in-place mutation.
+    fn set_distributed_optimize_shuffle_partitioning_ratio(
+        &mut self,
+        ratio: f64,
+    ) -> Result<(), DataFusionError>;
+
     /// The compression type to use for sending data over the wire.
     ///
     /// The default is [CompressionType::LZ4_FRAME].
@@ -615,6 +641,32 @@ impl DistributedExt for SessionConfig {
         Ok(())
     }
 
+    fn set_distributed_optimize_shuffle_partitioning(
+        &mut self,
+        enabled: bool,
+    ) -> Result<(), DataFusionError> {
+        let d_cfg = DistributedConfig::from_config_options_mut(self.options_mut())?;
+        d_cfg.optimize_shuffle_partitioning = enabled;
+        Ok(())
+    }
+
+    fn set_distributed_optimize_shuffle_partitioning_ratio(
+        &mut self,
+        ratio: f64,
+    ) -> Result<(), DataFusionError> {
+        let d_cfg = DistributedConfig::from_config_options_mut(self.options_mut())?;
+        d_cfg.optimize_shuffle_partitioning_ratio = ratio;
+        Ok(())
+    }
+
+    fn with_distributed_optimize_shuffle_partitioning_ratio(
+        mut self,
+        ratio: f64,
+    ) -> Result<Self, DataFusionError> {
+        self.set_distributed_optimize_shuffle_partitioning_ratio(ratio)?;
+        Ok(self)
+    }
+
     fn set_distributed_compression(
         &mut self,
         compression: Option<CompressionType>,
@@ -703,6 +755,10 @@ impl DistributedExt for SessionConfig {
             #[expr($?;Ok(self))]
             fn with_distributed_broadcast_joins(mut self, enabled: bool) -> Result<Self, DataFusionError>;
 
+            #[call(set_distributed_optimize_shuffle_partitioning)]
+            #[expr($?;Ok(self))]
+            fn with_distributed_optimize_shuffle_partitioning(mut self, enabled: bool) -> Result<Self, DataFusionError>;
+
             #[call(set_distributed_compression)]
             #[expr($?;Ok(self))]
             fn with_distributed_compression(mut self, compression: Option<CompressionType>) -> Result<Self, DataFusionError>;
@@ -784,6 +840,16 @@ impl DistributedExt for SessionStateBuilder {
             #[call(set_distributed_broadcast_joins)]
             #[expr($?;Ok(self))]
             fn with_distributed_broadcast_joins(mut self, enabled: bool) -> Result<Self, DataFusionError>;
+
+            fn set_distributed_optimize_shuffle_partitioning(&mut self, enabled: bool) -> Result<(), DataFusionError>;
+            #[call(set_distributed_optimize_shuffle_partitioning)]
+            #[expr($?;Ok(self))]
+            fn with_distributed_optimize_shuffle_partitioning(mut self, enabled: bool) -> Result<Self, DataFusionError>;
+
+            fn set_distributed_optimize_shuffle_partitioning_ratio(&mut self, ratio: f64) -> Result<(), DataFusionError>;
+            #[call(set_distributed_optimize_shuffle_partitioning_ratio)]
+            #[expr($?;Ok(self))]
+            fn with_distributed_optimize_shuffle_partitioning_ratio(mut self, ratio: f64) -> Result<Self, DataFusionError>;
 
             fn set_distributed_compression(&mut self, compression: Option<CompressionType>) -> Result<(), DataFusionError>;
             #[call(set_distributed_compression)]
@@ -871,6 +937,16 @@ impl DistributedExt for SessionState {
             #[expr($?;Ok(self))]
             fn with_distributed_broadcast_joins(mut self, enabled: bool) -> Result<Self, DataFusionError>;
 
+            fn set_distributed_optimize_shuffle_partitioning(&mut self, enabled: bool) -> Result<(), DataFusionError>;
+            #[call(set_distributed_optimize_shuffle_partitioning)]
+            #[expr($?;Ok(self))]
+            fn with_distributed_optimize_shuffle_partitioning(mut self, enabled: bool) -> Result<Self, DataFusionError>;
+
+            fn set_distributed_optimize_shuffle_partitioning_ratio(&mut self, ratio: f64) -> Result<(), DataFusionError>;
+            #[call(set_distributed_optimize_shuffle_partitioning_ratio)]
+            #[expr($?;Ok(self))]
+            fn with_distributed_optimize_shuffle_partitioning_ratio(mut self, ratio: f64) -> Result<Self, DataFusionError>;
+
             fn set_distributed_compression(&mut self, compression: Option<CompressionType>) -> Result<(), DataFusionError>;
             #[call(set_distributed_compression)]
             #[expr($?;Ok(self))]
@@ -956,6 +1032,16 @@ impl DistributedExt for SessionContext {
             #[call(set_distributed_broadcast_joins)]
             #[expr($?;Ok(self))]
             fn with_distributed_broadcast_joins(self, enabled: bool) -> Result<Self, DataFusionError>;
+
+            fn set_distributed_optimize_shuffle_partitioning(&mut self, enabled: bool) -> Result<(), DataFusionError>;
+            #[call(set_distributed_optimize_shuffle_partitioning)]
+            #[expr($?;Ok(self))]
+            fn with_distributed_optimize_shuffle_partitioning(self, enabled: bool) -> Result<Self, DataFusionError>;
+
+            fn set_distributed_optimize_shuffle_partitioning_ratio(&mut self, ratio: f64) -> Result<(), DataFusionError>;
+            #[call(set_distributed_optimize_shuffle_partitioning_ratio)]
+            #[expr($?;Ok(self))]
+            fn with_distributed_optimize_shuffle_partitioning_ratio(self, ratio: f64) -> Result<Self, DataFusionError>;
 
             fn set_distributed_compression(&mut self, compression: Option<CompressionType>) -> Result<(), DataFusionError>;
             #[call(set_distributed_compression)]
