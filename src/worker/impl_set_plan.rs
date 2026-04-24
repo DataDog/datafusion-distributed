@@ -1,6 +1,6 @@
 use crate::config_extension_ext::set_distributed_option_extension_from_headers;
 use crate::protobuf::DistributedCodec;
-use crate::worker::generated::worker::SetPlanRequest;
+use crate::worker::generated::worker::{MetricsCollection, SetPlanRequest};
 use crate::{DistributedConfig, DistributedTaskContext, Worker, WorkerQueryContext};
 use datafusion::error::DataFusionError;
 use datafusion::execution::{SessionStateBuilder, TaskContext};
@@ -10,6 +10,7 @@ use datafusion_proto::physical_plan::AsExecutionPlan;
 use datafusion_proto::protobuf::PhysicalPlanNode;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
+use tokio::sync::oneshot;
 use tonic::Status;
 use tonic::metadata::MetadataMap;
 
@@ -27,6 +28,10 @@ pub struct TaskData {
     /// complete because it's possible that the same partition was retried and this count was
     /// decremented more than once for the same partition.
     pub(super) num_partitions_remaining: Arc<AtomicUsize>,
+    /// Sender half of the metrics channel. `impl_execute_task` takes this (via `Option::take`)
+    /// once all partitions have finished or been dropped, sending the collected metrics back to
+    /// the coordinator through the `CoordinatorChannel` side channel.
+    pub(super) metrics_tx: Arc<std::sync::Mutex<Option<oneshot::Sender<MetricsCollection>>>>,
 }
 
 impl TaskData {
@@ -43,17 +48,21 @@ impl TaskData {
 }
 
 impl Worker {
+    /// Sets the plan for a task and returns a receiver that will yield the collected metrics
+    /// once all partitions of that task have finished executing (or been dropped early).
     pub(crate) async fn impl_set_plan(
         &self,
         request: SetPlanRequest,
         metadata: MetadataMap,
-    ) -> Result<(), Status> {
+    ) -> Result<oneshot::Receiver<MetricsCollection>, Status> {
         let key = request.task_key.ok_or_else(missing("task_key"))?;
 
         let entry = self
             .task_data_entries
             .get_with(key.clone(), async { Default::default() })
             .await;
+
+        let (metrics_tx, metrics_rx) = oneshot::channel();
 
         let task_data = || async {
             let headers = metadata.into_headers();
@@ -90,6 +99,7 @@ impl Worker {
                 plan,
                 task_ctx,
                 num_partitions_remaining: Arc::new(AtomicUsize::new(total_partitions)),
+                metrics_tx: Arc::new(std::sync::Mutex::new(Some(metrics_tx))),
             })
         };
 
@@ -98,7 +108,7 @@ impl Worker {
                 "Logic error while setting plan for TaskKey {key:?}: the plan was set twice. This is a bug in datafusion-distributed, please report it."
             ))
         })?;
-        Ok(())
+        Ok(metrics_rx)
     }
 }
 

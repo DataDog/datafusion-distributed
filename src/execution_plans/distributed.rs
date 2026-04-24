@@ -5,12 +5,15 @@ use crate::networking::get_distributed_worker_resolver;
 use crate::passthrough_headers::get_passthrough_headers;
 use crate::protobuf::{DistributedCodec, tonic_status_to_datafusion_error};
 use crate::stage::{ExecutionTask, Stage};
+use crate::worker::generated::worker as pb;
 use crate::worker::generated::worker::{
     CoordinatorToWorkerMsg, SetPlanRequest, TaskKey, coordinator_to_worker_msg::Inner,
+    worker_to_coordinator_msg,
 };
 use crate::{
     DISTRIBUTED_DATAFUSION_TASK_ID_LABEL, WorkerResolver, get_distributed_channel_resolver,
 };
+use dashmap::DashMap;
 use datafusion::common::instant::Instant;
 use datafusion::common::runtime::JoinSet;
 use datafusion::common::tree_node::{Transformed, TreeNode};
@@ -51,6 +54,7 @@ pub struct DistributedExec {
     pub plan: Arc<dyn ExecutionPlan>,
     pub prepared_plan: Arc<Mutex<Option<Arc<dyn ExecutionPlan>>>>,
     metrics: ExecutionPlanMetricsSet,
+    pub task_metrics: Arc<DashMap<TaskKey, Vec<pb::MetricsSet>>>,
 }
 
 struct PreparedPlan {
@@ -64,6 +68,7 @@ impl DistributedExec {
             plan,
             prepared_plan: Arc::new(Mutex::new(None)),
             metrics: ExecutionPlanMetricsSet::new(),
+            task_metrics: Arc::new(DashMap::new()),
         }
     }
 
@@ -86,6 +91,8 @@ impl DistributedExec {
     ///    network call feeding the subplan is necessary.
     /// 3. In each network boundary, set the input plan to `None`. That way, network boundaries
     ///    become nodes without children and traversing them will not go further down in.
+    /// 4. Spawn a background task per worker that waits for the worker to finish and collects
+    ///    its metrics into [DistributedExec::task_metrics] via the coordinator channel.
     fn prepare_plan(&self, ctx: &Arc<TaskContext>) -> Result<PreparedPlan> {
         let worker_resolver = get_distributed_worker_resolver(ctx.session_config())?;
         let codec = DistributedCodec::new_combined_with_user(ctx.session_config());
@@ -126,37 +133,62 @@ impl DistributedExec {
             let bytes = PhysicalPlanNode::try_from_physical_plan(Arc::clone(input_plan), &codec)?
                 .encode_to_vec();
 
-            let tasks = stage
-                .tasks
-                .iter()
-                .enumerate()
-                .map(|(i, _)| {
-                    let url = urls[(start_idx + i) % urls.len()].clone();
-                    let execution_task = ExecutionTask {
-                        url: Some(url.clone()),
+            let mut tasks = Vec::with_capacity(stage.tasks.len());
+            for i in 0..stage.tasks.len() {
+                let url = urls[(start_idx + i) % urls.len()].clone();
+                tasks.push(ExecutionTask {
+                    url: Some(url.clone()),
+                });
+                let task_key = TaskKey {
+                    query_id: stage.query_id.as_bytes().to_vec(),
+                    stage_id: stage.num as _,
+                    task_number: i as _,
+                };
+                let request = SetPlanRequest {
+                    plan_proto: bytes.clone(),
+                    task_count: stage.tasks.len() as _,
+                    task_key: Some(task_key),
+                };
+                plan_bytes_sent.add(bytes.len());
+                let plan_send_latency = Arc::clone(&plan_send_latency);
+                let ctx = Arc::clone(ctx);
+                let task_metrics_collection = Arc::clone(&self.task_metrics);
+
+                // Sending the plan and waiting for metrics both run in a detached tokio::spawn so
+                // they are not cancelled when the output stream is dropped early.
+                let (plan_sent_tx, plan_sent_rx) = tokio::sync::oneshot::channel::<Result<()>>();
+
+                tokio::spawn(async move {
+                    let result = send_plan_task(ctx, url, request).await;
+                    plan_send_latency.record(&start);
+
+                    let mut response_stream = match result {
+                        Err(e) => {
+                            let _ = plan_sent_tx.send(Err(e));
+                            return;
+                        }
+                        Ok(s) => s,
                     };
-                    let request = SetPlanRequest {
-                        plan_proto: bytes.clone(),
-                        task_count: stage.tasks.len() as _,
-                        task_key: Some(TaskKey {
-                            query_id: stage.query_id.as_bytes().to_vec(),
-                            stage_id: stage.num as _,
-                            task_number: i as _,
-                        }),
-                    };
-                    plan_bytes_sent.add(bytes.len());
-                    let plan_send_latency = Arc::clone(&plan_send_latency);
-                    let ctx = Arc::clone(ctx);
-                    // Spawns the task that feeds this subplan to this worker. There will be as
-                    // many as this spawned tasks as workers.
-                    join_set.spawn(async move {
-                        send_plan_task(ctx, url, request).await?;
-                        plan_send_latency.record(&start);
-                        Ok(())
-                    });
-                    execution_task
-                })
-                .collect::<Vec<_>>();
+                    let _ = plan_sent_tx.send(Ok(()));
+
+                    // The worker sends exactly one WorkerToCoordinatorMsg after all partitions
+                    // of the task have finished (or been dropped early), containing collected metrics.
+                    while let Some(Ok(msg)) = response_stream.next().await {
+                        let Some(worker_to_coordinator_msg::Inner::MetricsCollection(collection)) =
+                            msg.inner
+                        else {
+                            continue;
+                        };
+                        for task_metrics in collection.tasks {
+                            if let Some(task_key) = task_metrics.task_key {
+                                task_metrics_collection.insert(task_key, task_metrics.metrics);
+                            }
+                        }
+                    }
+                });
+
+                join_set.spawn(async move { plan_sent_rx.await.unwrap_or_else(|_| Ok(())) });
+            }
 
             Ok(Transformed::yes(plan.with_input_stage(Stage {
                 query_id: stage.query_id,
@@ -203,6 +235,7 @@ impl ExecutionPlan for DistributedExec {
             plan: require_one_child(&children)?,
             prepared_plan: self.prepared_plan.clone(),
             metrics: self.metrics.clone(),
+            task_metrics: Arc::clone(&self.task_metrics),
         }))
     }
 
@@ -256,7 +289,12 @@ impl ExecutionPlan for DistributedExec {
     }
 }
 
-async fn send_plan_task(ctx: Arc<TaskContext>, url: Url, request: SetPlanRequest) -> Result<()> {
+use crate::worker::generated::worker::WorkerToCoordinatorMsg;
+async fn send_plan_task(
+    ctx: Arc<TaskContext>,
+    url: Url,
+    request: SetPlanRequest,
+) -> Result<tonic::codec::Streaming<WorkerToCoordinatorMsg>> {
     let channel_resolver = get_distributed_channel_resolver(ctx.as_ref());
     let mut client = channel_resolver.get_worker_client_for_url(&url).await?;
 
@@ -272,11 +310,15 @@ async fn send_plan_task(ctx: Arc<TaskContext>, url: Url, request: SetPlanRequest
         futures::stream::once(async { msg }),
     );
 
-    client.coordinator_channel(request).await.map_err(|e| {
-        tonic_status_to_datafusion_error(&e)
-            .unwrap_or_else(|| exec_datafusion_err!("Error sending plan to worker {url}: {e}"))
-    })?;
-    Ok(())
+    let response_stream = client
+        .coordinator_channel(request)
+        .await
+        .map_err(|e| {
+            tonic_status_to_datafusion_error(&e)
+                .unwrap_or_else(|| exec_datafusion_err!("Error sending plan to worker {url}: {e}"))
+        })?
+        .into_inner();
+    Ok(response_stream)
 }
 
 /// DataFusion metrics system is pretty limited from an API standpoint. This intermediate struct

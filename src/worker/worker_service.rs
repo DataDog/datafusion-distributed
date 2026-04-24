@@ -1,6 +1,7 @@
 use crate::worker::WorkerSessionBuilder;
 use crate::worker::generated::worker::coordinator_to_worker_msg::Inner;
 use crate::worker::generated::worker::worker_service_server::{WorkerService, WorkerServiceServer};
+use crate::worker::generated::worker::worker_to_coordinator_msg;
 use crate::worker::generated::worker::{
     CoordinatorToWorkerMsg, ExecuteTaskRequest, TaskKey, WorkerToCoordinatorMsg,
 };
@@ -192,7 +193,23 @@ impl WorkerService for Worker {
 
             match inner {
                 Inner::SetPlanRequest(request) => {
-                    self.impl_set_plan(request, metadata).await?;
+                    let metrics_rx = self.impl_set_plan(request, metadata).await?;
+                    // Stream back the metrics once the task finishes executing.
+                    // The oneshot receiver resolves when impl_execute_task sends the collected
+                    // metrics after all partitions have finished or been dropped.
+                    let stream = futures::stream::once(async move {
+                        match metrics_rx.await {
+                            Ok(metrics_collection) => Ok(WorkerToCoordinatorMsg {
+                                inner: Some(worker_to_coordinator_msg::Inner::MetricsCollection(
+                                    metrics_collection,
+                                )),
+                            }),
+                            Err(_) => Err(Status::internal(
+                                "Metrics channel closed before metrics were sent",
+                            )),
+                        }
+                    });
+                    return Ok(Response::new(stream.boxed()));
                 }
             };
         }
