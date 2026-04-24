@@ -1,6 +1,7 @@
 use crate::config_extension_ext::set_distributed_option_extension;
-use crate::worker::generated::worker::TaskKey;
+use crate::worker::generated::worker::{MetricsCollection, TaskKey};
 use crate::{BoxCloneSyncChannel, DistributedConfig, DistributedExt, TaskData, Worker};
+use tokio::sync::oneshot;
 use arrow_ipc::CompressionType;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::arrow::record_batch::RecordBatch;
@@ -75,11 +76,13 @@ impl MemoryWorker {
                 Default::default()
             })
             .await;
+        let (metrics_tx, _metrics_rx) = oneshot::channel::<MetricsCollection>();
         swmr_task_data
             .write(Ok(TaskData {
                 task_ctx: task_ctx.clone(),
                 plan: plan.clone(),
                 num_partitions_remaining: Arc::new(AtomicUsize::new(self.partitions_batches.len())),
+                metrics_tx: Arc::new(std::sync::Mutex::new(Some(metrics_tx))),
             }))
             .expect("failed to write to task data");
 

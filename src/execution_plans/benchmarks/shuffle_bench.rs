@@ -147,7 +147,7 @@ impl ShuffleBench {
                     Boundedness::Bounded,
                 )),
                 input_stage: input_stage.clone(),
-                worker_connections: WorkerConnectionPool::new(self.bench.producer_tasks),
+                worker_connections: WorkerConnectionPool::new(self.producer_tasks),
             };
             let task_ctx = Arc::new(task_ctx_with_extension(
                 &task_ctx,
