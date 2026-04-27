@@ -110,11 +110,14 @@ impl DistributedExec {
     ///
     /// [`rewrite_distributed_plan_with_metrics`]: crate::rewrite_distributed_plan_with_metrics
     pub async fn wait_for_metrics(&self) {
-        let Ok(prepared) = self.prepared_plan() else {
-            return;
-        };
+        // Walk the ORIGINAL plan (not `prepared_plan`), because `prepare_plan` detaches each
+        // NetworkBoundary's input plan (sets `input_stage.plan = None`). After preparation, the
+        // sub-stage plans are no longer reachable via `children()`, so a traversal of the
+        // prepared plan would only see the top-level boundary and miss every nested stage.
+        // The original plan keeps the full stage tree intact, and the per-stage task counts are
+        // identical to what `prepare_plan` dispatched.
         let mut expected_keys: Vec<TaskKey> = Vec::new();
-        let _ = prepared.apply(|plan| {
+        let _ = self.plan.apply(|plan| {
             if let Some(boundary) = plan.as_network_boundary() {
                 let stage = boundary.input_stage();
                 for i in 0..stage.tasks.len() {
