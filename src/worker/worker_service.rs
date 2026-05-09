@@ -6,7 +6,8 @@ use crate::worker::generated::worker::{
 use crate::worker::single_write_multi_read::SingleWriteMultiRead;
 use crate::worker::task_data::TaskData;
 use crate::{
-    DefaultSessionBuilder, ObservabilityServiceImpl, ObservabilityServiceServer, WorkerResolver,
+    DefaultSessionBuilder, GetWorkerInfoRequest, GetWorkerInfoResponse, ObservabilityServiceImpl,
+    ObservabilityServiceServer, WorkerResolver,
 };
 use arrow_flight::FlightData;
 use async_trait::async_trait;
@@ -19,8 +20,6 @@ use std::sync::Arc;
 use std::time::Duration;
 use tonic::codegen::BoxStream;
 use tonic::{Request, Response, Status, Streaming};
-
-use super::generated::worker::{GetWorkerInfoRequest, GetWorkerInfoResponse};
 
 #[allow(clippy::type_complexity)]
 #[derive(Clone, Default)]
