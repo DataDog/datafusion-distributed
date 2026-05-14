@@ -35,6 +35,11 @@ use tonic::{Request, Response, Status};
 const RECORD_BATCH_BUFFER_SIZE: usize = 2;
 const WAIT_PLAN_TIMEOUT_SECS: u64 = 10;
 
+/// Builds several per-partition streams by retrieving the appropriate entry from [TaskDataEntries]
+/// based on the task key extracted from [ExecuteTaskRequest].
+///
+/// This method is async mainly for the key retrieval operation from [TaskDataEntries], but it does
+/// not start polling any stream, it just instantiates them.
 pub(crate) async fn execute_local_task(
     task_data_entries: &Arc<TaskDataEntries>,
     body: ExecuteTaskRequest,
@@ -139,6 +144,11 @@ pub(crate) async fn execute_local_task(
     Ok((streams, task_ctx))
 }
 
+/// Builds several per-partition streams by retrieving the appropriate entry from [TaskDataEntries]
+/// based on the task key extracted from the gRPC request.
+///
+/// This method eagerly starts streaming data from the task, and communicates via channels the
+/// produced [RecordBatch]s already encoded as Arrow Flight data.
 pub(crate) async fn execute_remote_task(
     task_data_entries: &Arc<TaskDataEntries>,
     request: Request<ExecuteTaskRequest>,
