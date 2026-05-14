@@ -454,24 +454,20 @@ impl WorkerConnection for LocalWorkerConnection {
         request.target_partition_start = partition as u64;
         request.target_partition_end = (partition + 1) as u64;
         let task_data_entries = Arc::clone(&self.lw_ctx.task_data_entries);
-        let Some(key) = request.task_key.as_ref().cloned() else {
-            return internal_err!("Missing task_key in LocalWorkerConnection");
-        };
-        // The task data entry needs to be eagerly retrieved, it cannot be left for until someone
-        // decides to start polling the returned stream, otherwise, there's risk that the entry is
-        // evicted by Moka's TTL, and by the time the returned stream is polled, the entry might
-        // have been lost.
-        let entry = SpawnedTask::spawn(async move {
-            task_data_entries
-                .get_with(key, async { Default::default() })
-                .await
+        // The relevant entry from `task_data_entries` needs to be eagerly retrieved, it cannot be
+        // left for until someone decides to start polling the returned `BoxStream`, otherwise,
+        // there's risk that the entry is evicted by Moka's TTL, and by the time the returned stream
+        // is polled, the entry might not be there.
+        //
+        // Note that this does not start polling the returned streams, it just instantiates them.
+        let streams_future = SpawnedTask::spawn(async move {
+            let (streams, _) = execute_local_task(&task_data_entries, request).await?;
+            Ok::<_, DataFusionError>(streams)
         });
-        let task_data_entries = Arc::clone(&self.lw_ctx.task_data_entries);
         Ok(async move {
-            let entry = entry
+            let mut streams = streams_future
                 .await
-                .map_err(|err| internal_datafusion_err!("{err}"))?;
-            let (mut streams, _) = execute_local_task(entry, &task_data_entries, request).await?;
+                .map_err(|err| internal_datafusion_err!("{err}"))??;
             if streams.len() != 1 {
                 return internal_err!("Expected exactly 1 local stream");
             }
