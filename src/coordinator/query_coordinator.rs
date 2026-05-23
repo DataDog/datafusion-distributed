@@ -12,12 +12,13 @@ use crate::worker::generated::worker::coordinator_to_worker_msg::Inner;
 use crate::worker::generated::worker::set_plan_request::WorkUnitFeedDeclaration;
 use crate::{
     DISTRIBUTED_DATAFUSION_TASK_ID_LABEL, DistributedCodec, DistributedConfig,
-    DistributedTaskContext, DistributedWorkUnitFeedContext, TaskEstimator, TaskKey,
-    TaskRoutingContext, get_distributed_channel_resolver, get_distributed_worker_resolver,
+    DistributedTaskContext, DistributedWorkUnitFeedContext, NetworkBoundaryExt, Stage,
+    TaskEstimator, TaskKey, TaskRoutingContext, get_distributed_channel_resolver,
+    get_distributed_worker_resolver,
 };
 use datafusion::common::instant::Instant;
 use datafusion::common::runtime::JoinSet;
-use datafusion::common::tree_node::{Transformed, TreeNodeRecursion};
+use datafusion::common::tree_node::{Transformed, TreeNode, TreeNodeRecursion};
 use datafusion::common::{DataFusionError, exec_datafusion_err};
 use datafusion::common::{Result, exec_err};
 use datafusion::execution::TaskContext;
@@ -25,6 +26,7 @@ use datafusion::physical_expr_common::metrics::{
     Count, ExecutionPlanMetricsSet, Label, MetricBuilder,
 };
 use datafusion::physical_plan::ExecutionPlan;
+use datafusion::prelude::SessionConfig;
 use datafusion_proto::physical_plan::AsExecutionPlan;
 use datafusion_proto::protobuf::PhysicalPlanNode;
 use futures::{Stream, StreamExt};
@@ -88,6 +90,11 @@ impl QueryCoordinator {
             end_stream_notifier: &self.end_stream_notifier,
             join_set: &self.join_set,
         }
+    }
+
+    /// Returns the [SessionConfig] for the current query.
+    pub(super) fn session_config(&self) -> &SessionConfig {
+        self.task_ctx.session_config()
     }
 
     /// returns a guard that, when dropped, it signals all the coordinator->worker connections that
@@ -223,13 +230,15 @@ impl<'a> StageCoordinator<'a> {
         &mut self,
         task_i: usize,
         mut worker_to_coordinator_rx: UnboundedReceiver<pb::WorkerToCoordinatorMsg>,
-    ) {
+    ) -> UnboundedReceiver<pb::LoadInfo> {
         let task_key = TaskKey {
             query_id: serialize_uuid(&self.query_id),
             stage_id: self.stage_id as u64,
             task_number: task_i as u64,
         };
         let task_metrics = self.metrics_store.clone();
+        let (load_info_tx, load_info_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut load_info_tx_opt = Some(load_info_tx);
 
         // Cannot use self.join_set because that's tied to the lifetime of the query, and the
         // metrics collection process might outlive the query's lifetime.
@@ -244,9 +253,18 @@ impl<'a> StageCoordinator<'a> {
                             task_metrics.insert(task_key.clone(), pre_order_metrics);
                         }
                     }
+                    pb::worker_to_coordinator_msg::Inner::LoadInfo(load_info) => {
+                        if let Some(tx) = &load_info_tx_opt {
+                            let _ = tx.send(load_info);
+                        }
+                    }
+                    pb::worker_to_coordinator_msg::Inner::LoadInfoEos(_) => {
+                        let _ = load_info_tx_opt.take();
+                    }
                 }
             }
         });
+        load_info_rx
     }
 
     /// Spawns a background task in charge of sending messages to workers. Some things that are sent
@@ -402,6 +420,28 @@ impl<'a> StageCoordinator<'a> {
             );
         }
         Ok(routed_urls)
+    }
+
+    pub(super) fn find_input_stage_with_single_url(&self) -> Option<Url> {
+        let mut single_stage_url = None;
+        self.plan
+            .apply(|plan| {
+                let Some(nb) = plan.as_network_boundary() else {
+                    return Ok(TreeNodeRecursion::Continue);
+                };
+
+                if let Stage::Remote(remote) = nb.input_stage()
+                    && remote.workers.len() == 1
+                {
+                    single_stage_url = Some(remote.workers[0].clone());
+                    return Ok(TreeNodeRecursion::Stop);
+                }
+
+                Ok(TreeNodeRecursion::Jump)
+            })
+            .expect("Cannot fail");
+
+        single_stage_url
     }
 }
 
