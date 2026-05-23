@@ -1,5 +1,6 @@
 use crate::MaxLatencyMetric;
-use crate::common::{OnceLockResult, now_ns};
+use crate::common::OnceLockResult;
+use crate::common::now_ns;
 use crate::distributed_planner::{ProducerHead, insert_producer_head};
 use crate::worker::generated::worker as pb;
 use datafusion::common::{DataFusionError, Result};

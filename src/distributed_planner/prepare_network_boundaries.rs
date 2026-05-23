@@ -45,6 +45,7 @@ pub(crate) fn prepare_network_boundaries(
             num: stage_id,
             plan,
             tasks: input_stage.tasks,
+            metrics_set: Default::default(),
         }))?;
         stage_id += 1;
         Ok(Transformed::yes(nb))

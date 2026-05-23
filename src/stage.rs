@@ -1,7 +1,7 @@
 use crate::coordinator::{DistributedExec, MetricsStore};
 use crate::execution_plans::{DistributedLeafExec, NetworkCoalesceExec};
 use crate::metrics::DISTRIBUTED_DATAFUSION_TASK_ID_LABEL;
-use datafusion::common::{HashMap, config_err};
+use datafusion::common::{HashMap, Statistics, config_err};
 use datafusion::common::{exec_err, plan_err};
 use datafusion::error::Result;
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
@@ -84,6 +84,8 @@ pub struct LocalStage {
     pub plan: Arc<dyn ExecutionPlan>,
     /// The number of tasks the stage has.
     pub tasks: usize,
+    /// Metrics collected by the coordinator
+    pub metrics_set: MetricsSet,
 }
 
 impl LocalStage {
@@ -107,6 +109,8 @@ pub struct RemoteStage {
     pub num: usize,
     /// The worker URLs to which queries should be issued.
     pub workers: Vec<Url>,
+    /// Statistics collected at runtime, if any.
+    pub runtime_stats: Option<Arc<Statistics>>,
 }
 
 impl Stage {
@@ -137,6 +141,27 @@ impl Stage {
             Self::Remote(_) => None,
         }
     }
+
+    pub fn metrics(&self) -> MetricsSet {
+        match &self {
+            Self::Local(v) => v.metrics_set.clone(),
+            Self::Remote(_) => MetricsSet::new(),
+        }
+    }
+
+    pub fn partition_statistics(
+        &self,
+        partition: Option<usize>,
+        schema: SchemaRef,
+    ) -> Result<Arc<Statistics>> {
+        match self {
+            Stage::Local(local) => local.plan.partition_statistics(partition),
+            Stage::Remote(remote) => Ok(remote
+                .runtime_stats
+                .clone()
+                .unwrap_or(Arc::new(Statistics::new_unknown(&schema)))),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -161,6 +186,7 @@ use crate::metrics::proto::metric_proto_to_df;
 use crate::worker::generated::worker as pb;
 use crate::{DistributedMetricsFormat, NetworkShuffleExec, rewrite_distributed_plan_with_metrics};
 use crate::{NetworkBoundary, NetworkBoundaryExt};
+use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::common::DataFusionError;
 use datafusion::physical_expr::Partitioning;
 /// Be able to display a nice tree for stages.
@@ -373,7 +399,7 @@ fn gather_stage_header_metrics(stage: &Stage, metrics_store: &MetricsStore) -> M
         stage_id: stage.num() as u64,
         task_number: 0,
     };
-    let mut all_metrics = MetricsSet::new();
+    let mut all_metrics = stage.metrics();
     while let Some(metrics_set) = metrics_store.get(&task_key).and_then(|v| v.task_metrics) {
         for mut metric in metrics_set.metrics {
             metric.labels.push(pb::Label {
@@ -573,6 +599,7 @@ pub fn display_plan_graphviz(plan: Arc<dyn ExecutionPlan>) -> Result<String> {
             num: max_num + 1,
             plan: plan.clone(),
             tasks: 1,
+            metrics_set: MetricsSet::new(),
         });
         all_stages.insert(0, &head_stage);
 
