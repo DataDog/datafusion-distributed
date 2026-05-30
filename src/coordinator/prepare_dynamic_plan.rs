@@ -309,7 +309,7 @@ async fn gather_runtime_statistics(
 fn find_sampler(plan: &Arc<dyn ExecutionPlan>) -> Option<&SamplerExec> {
     let mut sampler = None;
     plan.apply(|plan| {
-        if let Some(node) = plan.downcast_ref::<SamplerExec>() {
+        if let Some(node) = plan.as_any().downcast_ref::<SamplerExec>() {
             sampler = Some(node);
             return Ok(TreeNodeRecursion::Stop);
         };

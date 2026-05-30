@@ -3,6 +3,7 @@ use datafusion::common::{Result, Statistics, exec_err, not_impl_err, plan_err};
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::physical_expr_common::metrics::MetricsSet;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
+use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
@@ -140,6 +141,10 @@ impl ExecutionPlan for DistributedLeafExec {
         "DistributedLeafExec"
     }
 
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
@@ -161,9 +166,6 @@ impl ExecutionPlan for DistributedLeafExec {
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
         let d_ctx = DistributedTaskContext::from_ctx(&context);
-        if d_ctx.task_count == 1 {
-            return self.original.execute(partition, context);
-        }
 
         let Some(plan) = self.variants.get(d_ctx.task_index) else {
             return exec_err!(
@@ -177,10 +179,16 @@ impl ExecutionPlan for DistributedLeafExec {
     }
 
     fn metrics(&self) -> Option<MetricsSet> {
-        self.original.metrics()
+        let mut joined_metrics = MetricsSet::new();
+        for variant in self.variants.iter() {
+            if let Some(metrics) = variant.metrics() {
+                joined_metrics.extend(metrics)
+            }
+        }
+        Some(joined_metrics)
     }
 
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>> {
+    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
         self.original.partition_statistics(partition)
     }
 }

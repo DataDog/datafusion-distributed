@@ -14,6 +14,7 @@ use datafusion::physical_plan::{
 };
 use futures::{Stream, StreamExt};
 use itertools::Itertools;
+use std::any::Any;
 use std::fmt::Formatter;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -260,6 +261,10 @@ impl DisplayAs for ChildrenIsolatorUnionExec {
 impl ExecutionPlan for ChildrenIsolatorUnionExec {
     fn name(&self) -> &str {
         "ChildrenIsolatorUnionExec"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn properties(&self) -> &Arc<PlanProperties> {

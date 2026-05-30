@@ -241,8 +241,8 @@ impl TaskEstimator for FileScanConfigTaskEstimator {
         plan: &Arc<dyn ExecutionPlan>,
         cfg: &ConfigOptions,
     ) -> Option<TaskEstimation> {
-        let dse: &DataSourceExec = plan.downcast_ref()?;
-        let file_scan: &FileScanConfig = dse.data_source().downcast_ref()?;
+        let dse: &DataSourceExec = plan.as_any().downcast_ref()?;
+        let file_scan: &FileScanConfig = dse.data_source().as_any().downcast_ref()?;
 
         let d_cfg = cfg.extensions.get::<DistributedConfig>()?;
 
@@ -266,10 +266,10 @@ impl TaskEstimator for FileScanConfigTaskEstimator {
         task_count: usize,
         _cfg: &ConfigOptions,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let Some(dse) = plan.downcast_ref::<DataSourceExec>() else {
+        let Some(dse) = plan.as_any().downcast_ref::<DataSourceExec>() else {
             return Ok(None);
         };
-        let Some(file_scan) = dse.data_source().downcast_ref::<FileScanConfig>() else {
+        let Some(file_scan) = dse.data_source().as_any().downcast_ref::<FileScanConfig>() else {
             return Ok(None);
         };
         let partition_count = plan.output_partitioning().partition_count();
@@ -438,8 +438,12 @@ mod tests {
     }
 
     fn total_scan_bytes(node: &Arc<dyn ExecutionPlan>) -> usize {
-        let dse = node.downcast_ref::<DataSourceExec>().unwrap();
-        let file_scan = dse.data_source().downcast_ref::<FileScanConfig>().unwrap();
+        let dse = node.as_any().downcast_ref::<DataSourceExec>().unwrap();
+        let file_scan = dse
+            .data_source()
+            .as_any()
+            .downcast_ref::<FileScanConfig>()
+            .unwrap();
         file_scan
             .file_groups
             .iter()

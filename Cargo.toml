@@ -2,8 +2,8 @@
 members = ["benchmarks", "cli", "console"]
 
 [workspace.dependencies]
-datafusion = { version = "54.0.0", default-features = false }
-datafusion-proto = { version = "54.0.0" }
+datafusion = { version = "53.0.0", default-features = false }
+datafusion-proto = { version = "53.0.0" }
 
 [package]
 name = "datafusion-distributed"
@@ -84,3 +84,25 @@ test-case = "3.3.1"
 [workspace.lints.clippy]
 disallowed_types = "deny"
 disallowed-methods = "deny"
+
+[patch.crates-io]
+datafusion = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion" }
+datafusion-datasource = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-datasource" }
+datafusion-proto = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-proto" }
+datafusion-proto-common = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-proto-common" }
+datafusion-common = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-common" }
+datafusion-common-runtime = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-common-runtime" }
+datafusion-doc = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-doc" }
+datafusion-execution = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-execution" }
+datafusion-expr = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-expr" }
+datafusion-expr-common = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-expr-common" }
+datafusion-functions = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-functions" }
+datafusion-functions-aggregate-common = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-functions-aggregate-common" }
+datafusion-functions-window-common = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-functions-window-common" }
+datafusion-macros = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-macros" }
+datafusion-physical-expr = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-physical-expr" }
+datafusion-physical-expr-common = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-physical-expr-common" }
+datafusion-physical-optimizer = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-physical-optimizer" }
+datafusion-physical-plan = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-physical-plan" }
+datafusion-pruning = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-pruning" }
+datafusion-sql = { git = "https://github.com/DataDog/datafusion", rev = "4d3dc91357b8da24cedc85454a0c065575eabc5d", package = "datafusion-sql" }

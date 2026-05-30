@@ -38,6 +38,7 @@ use datafusion_proto::protobuf::proto_error;
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use prost::Message;
+use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
 use std::time::Duration;
@@ -139,6 +140,10 @@ impl ExecutionPlan for RemoteScanExec {
         "RemoteScanExec"
     }
 
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
@@ -225,6 +230,7 @@ impl PhysicalExtensionCodec for RemoteScanExecCodec {
 
     fn try_encode(&self, node: Arc<dyn ExecutionPlan>, buf: &mut Vec<u8>) -> Result<()> {
         let exec = node
+            .as_any()
             .downcast_ref::<RemoteScanExec>()
             .ok_or_else(|| proto_error(format!("expected RemoteScanExec, got {}", node.name())))?;
         RemoteScanProto {
@@ -254,6 +260,7 @@ impl TaskEstimator for RemoteScanTaskEstimator {
         _: &datafusion::config::ConfigOptions,
     ) -> Option<TaskEstimation> {
         let task_count = plan
+            .as_any()
             .downcast_ref::<RemoteScanExec>()?
             .feed
             .inner()?
@@ -267,7 +274,7 @@ impl TaskEstimator for RemoteScanTaskEstimator {
         task_count: usize,
         _: &datafusion::config::ConfigOptions,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let Some(exec) = plan.downcast_ref::<RemoteScanExec>() else {
+        let Some(exec) = plan.as_any().downcast_ref::<RemoteScanExec>() else {
             return Ok(None);
         };
         let partitions_per_task = exec.feed.try_inner()?.per_partition_chunks.len() / task_count;
@@ -336,6 +343,10 @@ struct ScanTableProvider {
 impl TableProvider for ScanTableProvider {
     fn schema(&self) -> SchemaRef {
         scan_schema()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn table_type(&self) -> TableType {

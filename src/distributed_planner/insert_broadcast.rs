@@ -134,7 +134,7 @@ pub(super) fn insert_broadcast_execs(
         };
 
         let broadcast_input = build_child
-            .downcast_ref::<CoalescePartitionsExec>()
+            .as_any().downcast_ref::<CoalescePartitionsExec>()
             .map_or_else(
                 || Arc::clone(build_child),
                 |coalesce| Arc::clone(coalesce.input()),
@@ -153,16 +153,16 @@ pub(super) fn insert_broadcast_execs(
 }
 
 fn can_broadcast_left_input(plan: &dyn ExecutionPlan) -> bool {
-    if let Some(hash_join) = plan.downcast_ref::<HashJoinExec>() {
+    if let Some(hash_join) = plan.as_any().downcast_ref::<HashJoinExec>() {
         return hash_join.partition_mode() == &PartitionMode::CollectLeft
             && is_left_broadcast_safe(hash_join.join_type());
     }
 
-    if let Some(nested_loop_join) = plan.downcast_ref::<NestedLoopJoinExec>() {
+    if let Some(nested_loop_join) = plan.as_any().downcast_ref::<NestedLoopJoinExec>() {
         return is_left_broadcast_safe(nested_loop_join.join_type());
     }
 
-    plan.downcast_ref::<CrossJoinExec>().is_some()
+    plan.as_any().downcast_ref::<CrossJoinExec>().is_some()
 }
 
 fn is_left_broadcast_safe(join_type: &JoinType) -> bool {
@@ -249,7 +249,7 @@ mod tests {
         HashJoinExec: mode=CollectLeft, join_type=Left, on=[(RainToday@1, RainToday@1)], projection=[MinTemp@0, MaxTemp@2]
           CoalescePartitionsExec
             DataSourceExec: file_groups={3 groups: [[/testdata/weather/result-000000.parquet], [/testdata/weather/result-000001.parquet], [/testdata/weather/result-000002.parquet]]}, projection=[MinTemp, RainToday], file_type=parquet
-          DataSourceExec: file_groups={3 groups: [[/testdata/weather/result-000000.parquet], [/testdata/weather/result-000001.parquet], [/testdata/weather/result-000002.parquet]]}, projection=[MaxTemp, RainToday], file_type=parquet, predicate=DynamicFilter [ empty ]
+          DataSourceExec: file_groups={3 groups: [[/testdata/weather/result-000000.parquet], [/testdata/weather/result-000001.parquet], [/testdata/weather/result-000002.parquet]]}, projection=[MaxTemp, RainToday], file_type=parquet
         ");
     }
 

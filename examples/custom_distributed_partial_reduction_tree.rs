@@ -97,7 +97,7 @@ impl PhysicalOptimizerRule for PartialReductionTreeRule {
     ) -> Result<Arc<dyn ExecutionPlan>> {
         let result = plan.transform_down(|node| {
             // Match the top (finalising) aggregate of a two-phase aggregation.
-            let Some(top_agg) = node.downcast_ref::<AggregateExec>() else {
+            let Some(top_agg) = node.as_any().downcast_ref::<AggregateExec>() else {
                 return Ok(Transformed::no(node));
             };
             if matches!(
@@ -116,7 +116,10 @@ impl PhysicalOptimizerRule for PartialReductionTreeRule {
             if find_node(&partial_node, is_data_source).is_none() {
                 return Ok(Transformed::no(node));
             }
-            let partial = partial_node.downcast_ref::<AggregateExec>().unwrap();
+            let partial = partial_node
+                .as_any()
+                .downcast_ref::<AggregateExec>()
+                .unwrap();
 
             // The partial-aggregate subtree (with its plain parquet leaf) is the producer stage,
             // running on `leaf_tasks` tasks. We don't split the leaf ourselves: the distributed
@@ -193,12 +196,13 @@ fn positional_group_by(orig: &PhysicalGroupBy) -> PhysicalGroupBy {
 }
 
 fn is_aggregate_mode(plan: &Arc<dyn ExecutionPlan>, mode: AggregateMode) -> bool {
-    plan.downcast_ref::<AggregateExec>()
+    plan.as_any()
+        .downcast_ref::<AggregateExec>()
         .is_some_and(|a| *a.mode() == mode)
 }
 
 fn is_data_source(plan: &Arc<dyn ExecutionPlan>) -> bool {
-    plan.is::<DataSourceExec>()
+    plan.as_any().is::<DataSourceExec>()
 }
 
 /// Returns a clone of the first node (top-down) matching `predicate`.

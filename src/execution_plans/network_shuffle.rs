@@ -14,6 +14,7 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties, Statistics,
 };
+use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -118,7 +119,7 @@ impl NetworkShuffleExec {
     /// Creates a new [NetworkShuffleExec] fed by the provided [RepartitionExec]. The input plan
     /// will be executed in a remote worker in `producer_tasks` number of tasks.
     pub fn try_new(input: Arc<dyn ExecutionPlan>, producer_tasks: usize) -> Result<Self> {
-        let Some(r_exec) = input.downcast_ref::<RepartitionExec>() else {
+        let Some(r_exec) = input.as_any().downcast_ref::<RepartitionExec>() else {
             return plan_err!("The input of a NetworkShuffleExec can only be a RepartitionExec");
         };
         if !matches!(r_exec.partitioning(), Partitioning::Hash(_, _)) {
@@ -178,6 +179,10 @@ impl DisplayAs for NetworkShuffleExec {
 impl ExecutionPlan for NetworkShuffleExec {
     fn name(&self) -> &str {
         "NetworkShuffleExec"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn properties(&self) -> &Arc<PlanProperties> {
@@ -247,7 +252,7 @@ impl ExecutionPlan for NetworkShuffleExec {
         Some(self.worker_connections.metrics.clone_inner())
     }
 
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>> {
+    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
         self.input_stage
             .partition_statistics(partition, self.schema())
     }

@@ -48,11 +48,11 @@ pub trait NetworkBoundaryExt {
 
 impl NetworkBoundaryExt for dyn ExecutionPlan {
     fn as_network_boundary(&self) -> Option<&dyn NetworkBoundary> {
-        if let Some(node) = self.downcast_ref::<NetworkShuffleExec>() {
+        if let Some(node) = self.as_any().downcast_ref::<NetworkShuffleExec>() {
             Some(node)
-        } else if let Some(node) = self.downcast_ref::<NetworkCoalesceExec>() {
+        } else if let Some(node) = self.as_any().downcast_ref::<NetworkCoalesceExec>() {
             Some(node)
-        } else if let Some(node) = self.downcast_ref::<NetworkBroadcastExec>() {
+        } else if let Some(node) = self.as_any().downcast_ref::<NetworkBroadcastExec>() {
             Some(node)
         } else {
             None
@@ -66,9 +66,9 @@ pub(crate) fn insert_producer_head(
     input: Arc<dyn ExecutionPlan>,
     head: ProducerHead,
 ) -> Result<Arc<dyn ExecutionPlan>> {
-    let input = if let Some(r_exec) = input.downcast_ref::<RepartitionExec>() {
+    let input = if let Some(r_exec) = input.as_any().downcast_ref::<RepartitionExec>() {
         Arc::clone(r_exec.input())
-    } else if let Some(b_exec) = input.downcast_ref::<BroadcastExec>() {
+    } else if let Some(b_exec) = input.as_any().downcast_ref::<BroadcastExec>() {
         Arc::clone(b_exec.input())
     } else {
         input
@@ -88,10 +88,10 @@ pub(crate) fn insert_producer_head(
 
 /// Injects a [SamplerExec] right below a [RepartitionExec] or [BroadcastExec].
 pub(crate) fn insert_sampler(input: Arc<dyn ExecutionPlan>) -> Result<Arc<dyn ExecutionPlan>> {
-    if let Some(r_exec) = input.downcast_ref::<RepartitionExec>() {
+    if let Some(r_exec) = input.as_any().downcast_ref::<RepartitionExec>() {
         let child = Arc::clone(r_exec.input());
         input.with_new_children(vec![Arc::new(SamplerExec::new(child))])
-    } else if let Some(b_exec) = input.downcast_ref::<BroadcastExec>() {
+    } else if let Some(b_exec) = input.as_any().downcast_ref::<BroadcastExec>() {
         let child = Arc::clone(b_exec.input());
         input.with_new_children(vec![Arc::new(SamplerExec::new(child))])
     } else {

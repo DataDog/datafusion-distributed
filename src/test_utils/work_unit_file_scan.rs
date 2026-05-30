@@ -29,6 +29,7 @@ use datafusion_proto::protobuf::proto_error;
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use prost::Message;
+use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 
@@ -140,6 +141,10 @@ impl DataSource for WorkUnitFileScanConfig {
         Ok(Box::pin(RecordBatchStreamAdapter::new(schema, stream)))
     }
 
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn fmt_as(&self, t: DisplayFormatType, f: &mut Formatter) -> std::fmt::Result {
         match t {
             DisplayFormatType::Default | DisplayFormatType::Verbose => {
@@ -176,7 +181,7 @@ impl DataSource for WorkUnitFileScanConfig {
         SchedulingType::Cooperative
     }
 
-    fn partition_statistics(&self, _partition: Option<usize>) -> Result<Arc<Statistics>> {
+    fn partition_statistics(&self, _partition: Option<usize>) -> Result<Statistics> {
         // Statistics for a specific partition are not known at planning time
         // because we don't know which file will land on it; fall back to the
         // aggregate template statistics.
@@ -251,12 +256,12 @@ impl PhysicalExtensionCodec for WorkUnitFileScanCodec {
             .map_err(|e| proto_error(format!("Failed to decode template plan: {e}")))?;
         let template_plan =
             plan_node.try_into_physical_plan(ctx, &DefaultPhysicalExtensionCodec {})?;
-        let Some(dse) = template_plan.downcast_ref::<DataSourceExec>() else {
+        let Some(dse) = template_plan.as_any().downcast_ref::<DataSourceExec>() else {
             return Err(proto_error(
                 "Expected the WorkUnitFileScan template plan to be a DataSourceExec",
             ));
         };
-        let Some(inner) = dse.data_source().downcast_ref::<FileScanConfig>() else {
+        let Some(inner) = dse.data_source().as_any().downcast_ref::<FileScanConfig>() else {
             return Err(proto_error(
                 "Expected the WorkUnitFileScan template DataSource to be a FileScanConfig",
             ));
@@ -272,13 +277,17 @@ impl PhysicalExtensionCodec for WorkUnitFileScanCodec {
     }
 
     fn try_encode(&self, node: Arc<dyn ExecutionPlan>, buf: &mut Vec<u8>) -> Result<()> {
-        let Some(dse) = node.downcast_ref::<DataSourceExec>() else {
+        let Some(dse) = node.as_any().downcast_ref::<DataSourceExec>() else {
             return internal_err!(
                 "Expected DataSourceExec wrapping a WorkUnitFileScanConfig, got {}",
                 node.name()
             );
         };
-        let Some(wfs) = dse.data_source().downcast_ref::<WorkUnitFileScanConfig>() else {
+        let Some(wfs) = dse
+            .data_source()
+            .as_any()
+            .downcast_ref::<WorkUnitFileScanConfig>()
+        else {
             return internal_err!("Expected the inner DataSource to be a WorkUnitFileScanConfig");
         };
 
@@ -322,10 +331,10 @@ impl PhysicalOptimizerRule for WorkUnitFileScanRule {
         _config: &ConfigOptions,
     ) -> Result<Arc<dyn ExecutionPlan>> {
         plan.transform_down(|node| {
-            let Some(dse) = node.downcast_ref::<DataSourceExec>() else {
+            let Some(dse) = node.as_any().downcast_ref::<DataSourceExec>() else {
                 return Ok(Transformed::no(node));
             };
-            let Some(fsc) = dse.data_source().downcast_ref::<FileScanConfig>() else {
+            let Some(fsc) = dse.data_source().as_any().downcast_ref::<FileScanConfig>() else {
                 return Ok(Transformed::no(node));
             };
 
@@ -366,8 +375,11 @@ impl TaskEstimator for WorkUnitFileScanTaskEstimator {
         plan: &Arc<dyn ExecutionPlan>,
         cfg: &ConfigOptions,
     ) -> Option<TaskEstimation> {
-        let dse = plan.downcast_ref::<DataSourceExec>()?;
-        let wfs = dse.data_source().downcast_ref::<WorkUnitFileScanConfig>()?;
+        let dse = plan.as_any().downcast_ref::<DataSourceExec>()?;
+        let wfs = dse
+            .data_source()
+            .as_any()
+            .downcast_ref::<WorkUnitFileScanConfig>()?;
 
         // Same as FileScanConfigTaskEstimator.task_estimation.
         let d_cfg = cfg.extensions.get::<DistributedConfig>()?;
@@ -394,10 +406,14 @@ impl TaskEstimator for WorkUnitFileScanTaskEstimator {
         task_count: usize,
         _cfg: &ConfigOptions,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let Some(dse) = plan.downcast_ref::<DataSourceExec>() else {
+        let Some(dse) = plan.as_any().downcast_ref::<DataSourceExec>() else {
             return Ok(None);
         };
-        let Some(wfs) = dse.data_source().downcast_ref::<WorkUnitFileScanConfig>() else {
+        let Some(wfs) = dse
+            .data_source()
+            .as_any()
+            .downcast_ref::<WorkUnitFileScanConfig>()
+        else {
             return Ok(None);
         };
 

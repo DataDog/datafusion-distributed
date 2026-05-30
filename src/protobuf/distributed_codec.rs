@@ -23,7 +23,6 @@ use datafusion_proto::physical_plan::from_proto::parse_protobuf_partitioning;
 use datafusion_proto::physical_plan::to_proto::serialize_partitioning;
 use datafusion_proto::physical_plan::{
     ComposedPhysicalExtensionCodec, DefaultPhysicalProtoConverter, PhysicalExtensionCodec,
-    PhysicalPlanDecodeContext,
 };
 use datafusion_proto::protobuf;
 use datafusion_proto::protobuf::proto_error;
@@ -107,11 +106,11 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     .map(|s| s.try_into())
                     .ok_or(proto_error("NetworkShuffleExec is missing schema"))??;
 
-                let decode_ctx = PhysicalPlanDecodeContext::new(ctx, &DistributedCodec {});
                 let partitioning = parse_protobuf_partitioning(
                     partitioning.as_ref(),
-                    &decode_ctx,
+                    ctx,
                     &schema,
+                    &DistributedCodec {},
                     &DefaultPhysicalProtoConverter {},
                 )?
                 .ok_or(proto_error("NetworkShuffleExec is missing partitioning"))?;
@@ -132,11 +131,11 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     .map(|s| s.try_into())
                     .ok_or(proto_error("NetworkCoalesceExec is missing schema"))??;
 
-                let decode_ctx = PhysicalPlanDecodeContext::new(ctx, &DistributedCodec {});
                 let partitioning = parse_protobuf_partitioning(
                     partitioning.as_ref(),
-                    &decode_ctx,
+                    ctx,
                     &schema,
+                    &DistributedCodec {},
                     &DefaultPhysicalProtoConverter {},
                 )?
                 .ok_or(proto_error("NetworkCoalesceExec is missing partitioning"))?;
@@ -157,11 +156,11 @@ impl PhysicalExtensionCodec for DistributedCodec {
                     .map(|s| s.try_into())
                     .ok_or(proto_error("NetworkBroadcastExec is missing schema"))??;
 
-                let decode_ctx = PhysicalPlanDecodeContext::new(ctx, &DistributedCodec {});
                 let partitioning = parse_protobuf_partitioning(
                     partitioning.as_ref(),
-                    &decode_ctx,
+                    ctx,
                     &schema,
+                    &DistributedCodec {},
                     &DefaultPhysicalProtoConverter {},
                 )?
                 .ok_or(proto_error("NetworkBroadcastExec is missing partitioning"))?;
@@ -265,7 +264,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
             })
         }
 
-        if let Some(node) = node.downcast_ref::<NetworkShuffleExec>() {
+        if let Some(node) = node.as_any().downcast_ref::<NetworkShuffleExec>() {
             let inner = NetworkShuffleExecProto {
                 schema: Some(node.schema().try_into()?),
                 partitioning: Some(serialize_partitioning(
@@ -281,7 +280,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
             };
 
             wrapper.encode(buf).map_err(|e| proto_error(format!("{e}")))
-        } else if let Some(node) = node.downcast_ref::<NetworkCoalesceExec>() {
+        } else if let Some(node) = node.as_any().downcast_ref::<NetworkCoalesceExec>() {
             let inner = NetworkCoalesceExecProto {
                 schema: Some(node.schema().try_into()?),
                 partitioning: Some(serialize_partitioning(
@@ -297,7 +296,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
             };
 
             wrapper.encode(buf).map_err(|e| proto_error(format!("{e}")))
-        } else if let Some(node) = node.downcast_ref::<NetworkBroadcastExec>() {
+        } else if let Some(node) = node.as_any().downcast_ref::<NetworkBroadcastExec>() {
             let inner = NetworkBroadcastExecProto {
                 schema: Some(node.schema().try_into()?),
                 partitioning: Some(serialize_partitioning(
@@ -313,7 +312,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
             };
 
             wrapper.encode(buf).map_err(|e| proto_error(format!("{e}")))
-        } else if let Some(node) = node.downcast_ref::<BroadcastExec>() {
+        } else if let Some(node) = node.as_any().downcast_ref::<BroadcastExec>() {
             let inner = BroadcastExecProto {
                 consumer_task_count: node.consumer_task_count() as u64,
             };
@@ -323,7 +322,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
             };
 
             wrapper.encode(buf).map_err(|e| proto_error(format!("{e}")))
-        } else if let Some(node) = node.downcast_ref::<ChildrenIsolatorUnionExec>() {
+        } else if let Some(node) = node.as_any().downcast_ref::<ChildrenIsolatorUnionExec>() {
             let inner = ChildrenIsolatorUnionExecProto {
                 partition_count: node.properties().output_partitioning().partition_count() as u64,
                 task_idx_map: node
@@ -355,7 +354,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
             };
 
             wrapper.encode(buf).map_err(|e| proto_error(format!("{e}")))
-        } else if let Some(_node) = node.downcast_ref::<SamplerExec>() {
+        } else if let Some(_node) = node.as_any().downcast_ref::<SamplerExec>() {
             let inner = SamplerExecProto {};
 
             let wrapper = DistributedExecProto {
