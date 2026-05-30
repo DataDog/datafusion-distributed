@@ -18,6 +18,7 @@ use datafusion::physical_plan::metrics::{ExecutionPlanMetricsSet, MetricBuilder,
 use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::{FutureExt, Stream, StreamExt, TryFutureExt, TryStreamExt};
+use std::any::Any;
 use std::collections::VecDeque;
 use std::fmt::{Debug, Formatter};
 use std::pin::Pin;
@@ -135,7 +136,7 @@ impl SamplerExec {
     ) -> Result<Vec<oneshot::Receiver<pb::LoadInfo>>> {
         let mut receivers = vec![];
         plan.apply(|plan| {
-            let Some(sampler) = plan.downcast_ref::<SamplerExec>() else {
+            let Some(sampler) = plan.as_any().downcast_ref::<SamplerExec>() else {
                 return Ok(TreeNodeRecursion::Continue);
             };
             receivers.reserve(sampler.partition_samplers.len());
@@ -527,6 +528,10 @@ impl DisplayAs for SamplerExec {
 impl ExecutionPlan for SamplerExec {
     fn name(&self) -> &str {
         "SamplerExec"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn properties(&self) -> &Arc<PlanProperties> {

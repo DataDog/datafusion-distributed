@@ -15,6 +15,7 @@ use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
 use datafusion::physical_plan::stream::RecordBatchReceiverStreamBuilder;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use futures::StreamExt;
+use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::{Arc, Mutex};
 
@@ -146,6 +147,10 @@ impl DisplayAs for DistributedExec {
 impl ExecutionPlan for DistributedExec {
     fn name(&self) -> &str {
         "DistributedExec"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn properties(&self) -> &Arc<PlanProperties> {

@@ -14,6 +14,7 @@ use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, EmptyRecordBatchStream, ExecutionPlan, PlanProperties,
     Statistics, internal_err,
 };
+use std::any::Any;
 use std::fmt::{Debug, Formatter};
 use std::sync::Arc;
 use uuid::Uuid;
@@ -201,6 +202,10 @@ impl ExecutionPlan for NetworkCoalesceExec {
         "NetworkCoalesceExec"
     }
 
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn properties(&self) -> &Arc<PlanProperties> {
         &self.properties
     }
@@ -312,7 +317,7 @@ impl ExecutionPlan for NetworkCoalesceExec {
         Some(self.worker_connections.metrics.clone_inner())
     }
 
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>> {
+    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
         self.input_stage
             .partition_statistics(partition, self.schema())
     }

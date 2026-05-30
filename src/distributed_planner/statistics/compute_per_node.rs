@@ -182,7 +182,7 @@ impl Debug for Complexity {
 pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Complexity {
     // NestedLoopJoinExec: O(n*m) - evaluates join condition for each pair of rows
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/joins/nested_loop_join.rs
-    if let Some(node) = node.downcast_ref::<NestedLoopJoinExec>() {
+    if let Some(node) = node.as_any().downcast_ref::<NestedLoopJoinExec>() {
         // Assume we need to do read all input rows one by one.
         let n = Complexity::Linear(LinearComplexity::AllColumnsFromLeft);
         let m = Complexity::Linear(LinearComplexity::AllColumnsFromRight);
@@ -198,7 +198,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
 
     // CrossJoinExec: O(n*m) - produces Cartesian product of all row pairs
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/joins/cross_join.rs
-    if let Some(_node) = node.downcast_ref::<CrossJoinExec>() {
+    if let Some(_node) = node.as_any().downcast_ref::<CrossJoinExec>() {
         // Assume we need to do read all input rows one by one.
         let n = Complexity::Linear(LinearComplexity::AllColumnsFromLeft);
         let m = Complexity::Linear(LinearComplexity::AllColumnsFromRight);
@@ -207,7 +207,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
 
     // SortExec: O(n log n) - uses lexsort_to_indices, may spill to disk
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/sorts/sort.rs
-    if let Some(node) = node.downcast_ref::<SortExec>() {
+    if let Some(node) = node.as_any().downcast_ref::<SortExec>() {
         // All the rows will need to be copied one by one.
         let mut n = Complexity::Linear(LinearComplexity::AllColumns);
         // The sort comparators read every sort key on every row, so even a plain column key costs
@@ -220,7 +220,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
 
     // HashJoinExec: hash table build (O(n)) + probe (O(m))
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/joins/hash_join/exec.rs
-    if let Some(join) = node.downcast_ref::<HashJoinExec>() {
+    if let Some(join) = node.as_any().downcast_ref::<HashJoinExec>() {
         // Build side (left): concat_batches copies all data (2x read), plus hash table storage,
         // plus hashing left join keys.
         let mut c = Complexity::Linear(LinearComplexity::AllColumnsFromLeft)
@@ -245,7 +245,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
     // Unlike hash join, sort-merge doesn't buffer all data or build hash tables. It streams
     // through both sorted inputs with O(max_group_size) memory, using partial_cmp comparisons
     // (no hashing). Per-row cost is just key comparisons + optional filter evaluation.
-    if let Some(node) = node.downcast_ref::<SortMergeJoinExec>() {
+    if let Some(node) = node.as_any().downcast_ref::<SortMergeJoinExec>() {
         let mut c: Option<Complexity> = None;
         // Left side: compare join keys during merge
         for (left_key, _) in node.on() {
@@ -279,7 +279,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
     // More expensive than HashJoinExec: both sides maintain hash tables, concat_batches
     // runs on every incoming batch (not once at end), plus pruning interval computation
     // and HashSet tracking for visited rows.
-    if let Some(node) = node.downcast_ref::<SymmetricHashJoinExec>() {
+    if let Some(node) = node.as_any().downcast_ref::<SymmetricHashJoinExec>() {
         // Both sides: concat_batches on every batch (2x read) + hash table + hash keys
         let mut c = Complexity::Linear(LinearComplexity::AllColumnsFromLeft)
             .plus(Complexity::Linear(LinearComplexity::AllColumnsFromLeft));
@@ -301,7 +301,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
 
     // Aggregation: hash group-by keys + accumulate aggregate inputs
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/aggregates/mod.rs
-    if let Some(agg) = node.downcast_ref::<AggregateExec>() {
+    if let Some(agg) = node.as_any().downcast_ref::<AggregateExec>() {
         // Base: read all input columns for accumulation
         let mut c = Complexity::Linear(LinearComplexity::AllColumns);
         // Additional: evaluate and hash group-by key expressions
@@ -317,7 +317,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
 
     // Window functions: buffer partitions, compute aggregates over windows
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/windows/window_agg_exec.rs
-    if let Some(node) = node.downcast_ref::<WindowAggExec>() {
+    if let Some(node) = node.as_any().downcast_ref::<WindowAggExec>() {
         // Read all input data + evaluate/hash partition key expressions
         let mut c = Complexity::Linear(LinearComplexity::AllColumns);
         for expr in node.partition_keys() {
@@ -326,7 +326,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
         return c;
     }
 
-    if let Some(node) = node.downcast_ref::<BoundedWindowAggExec>() {
+    if let Some(node) = node.as_any().downcast_ref::<BoundedWindowAggExec>() {
         let mut c = Complexity::Linear(LinearComplexity::AllColumns);
         for expr in node.partition_keys() {
             c = c.plus(hashed_or_sorted_key_complexity(&expr));
@@ -337,7 +337,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
     // SortPreservingMergeExec: merges pre-sorted streams with comparisons
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/sorts/sort_preserving_merge.rs
     // K-way merge: O(N log K) comparisons on sort key expressions
-    if let Some(node) = node.downcast_ref::<SortPreservingMergeExec>() {
+    if let Some(node) = node.as_any().downcast_ref::<SortPreservingMergeExec>() {
         // need to copy all rows...
         let mut n = Complexity::Linear(LinearComplexity::AllColumns);
         // and compare the sort keys on all of them; a plain column key still costs its bytes.
@@ -350,7 +350,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
     // FilterExec: evaluates predicate expression per row
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/filter.rs
     // Cost depends on predicate complexity - LIKE/Regex operations are expensive
-    if let Some(node) = node.downcast_ref::<FilterExec>() {
+    if let Some(node) = node.as_any().downcast_ref::<FilterExec>() {
         // It needs to perform a copy operation just to the output rows...
         let n = Complexity::Linear(LinearComplexity::AllOutputColumns);
         // ...and predicate evaluation on all input rows.
@@ -359,7 +359,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
 
     // ProjectionExec: cost depends on whether it's simple columns or expressions
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/projection.rs
-    if let Some(node) = node.downcast_ref::<ProjectionExec>() {
+    if let Some(node) = node.as_any().downcast_ref::<ProjectionExec>() {
         let mut n: Option<Complexity> = None;
         for expr in node.expr() {
             n = if let Some(n) = n {
@@ -373,7 +373,7 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
 
     // RepartitionExec with Hash: computes hash per row + take_arrays
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/repartition/mod.rs
-    if let Some(node) = node.downcast_ref::<RepartitionExec>() {
+    if let Some(node) = node.as_any().downcast_ref::<RepartitionExec>() {
         // It needs to copy all the data for chunking it to the different output partitions...
         let mut n = Complexity::Linear(LinearComplexity::AllColumns);
         // And it might need to compute a hash per row based on the provided expressions; hashing a
@@ -391,43 +391,43 @@ pub(super) fn calculate_compute_complexity(node: &Arc<dyn ExecutionPlan>) -> Com
     }
 
     // DataSourceExec: Produces data, so assume that it's an O(N) operation over all the columns.
-    if node.is::<DataSourceExec>() {
+    if node.as_any().is::<DataSourceExec>() {
         return Complexity::Linear(LinearComplexity::AllOutputColumns);
     }
 
     // Limit: just counts rows and stops early.
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/limit.rs
-    if node.is::<GlobalLimitExec>() || node.is::<LocalLimitExec>() {
+    if node.as_any().is::<GlobalLimitExec>() || node.as_any().is::<LocalLimitExec>() {
         return Complexity::Constant(1);
     }
 
     // CoalescePartitionsExec: receives batches from partitions, just passes through the record
     // batches in a zero copy manner.
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/coalesce_partitions.rs
-    if node.is::<CoalescePartitionsExec>() {
+    if node.as_any().is::<CoalescePartitionsExec>() {
         return Complexity::Constant(1);
     }
 
     // BroadcastExec: This node does not do any computation, does not even read the data.
-    if node.is::<BroadcastExec>() {
+    if node.as_any().is::<BroadcastExec>() {
         return Complexity::Constant(1);
     }
 
     // UnionExec: combines multiple input streams, no processing
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/union.rs
-    if node.is::<UnionExec>() || node.is::<ChildrenIsolatorUnionExec>() {
+    if node.as_any().is::<UnionExec>() || node.as_any().is::<ChildrenIsolatorUnionExec>() {
         return Complexity::Constant(1);
     }
 
     // InterleaveExec: round-robin merging of inputs, no processing
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/union.rs
-    if node.is::<InterleaveExec>() {
+    if node.as_any().is::<InterleaveExec>() {
         return Complexity::Constant(1);
     }
 
     // EmptyExec: produces no data
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/empty.rs
-    if node.is::<EmptyExec>() {
+    if node.as_any().is::<EmptyExec>() {
         return Complexity::Constant(1);
     }
 
@@ -533,12 +533,12 @@ fn hashed_or_sorted_key_complexity(expression: &Arc<dyn PhysicalExpr>) -> Comple
 }
 
 fn _expression_complexity(expression: &Arc<dyn PhysicalExpr>) -> BytesPerRow {
-    if let Some(col) = expression.downcast_ref::<Column>() {
+    if let Some(col) = expression.as_any().downcast_ref::<Column>() {
         BytesPerRow {
             processed: None,
             cols_read: vec![col.index()],
         }
-    } else if expression.is::<Literal>() {
+    } else if expression.as_any().is::<Literal>() {
         BytesPerRow {
             processed: None,
             cols_read: vec![],
@@ -670,7 +670,7 @@ mod tests {
             .await;
         assert_snapshot!(plan_costs(plan), @r"
         O((Cols+Col5)*Log((Cols+Col5))) | SortExec: expr=[WindGustDir@5 ASC NULLS LAST], preserve_partitioning=[false]
-         O(out_Cols) | DataSourceExec: file_groups={1 group: [[/testdata/weather/result-000000.parquet, /testdata/weather/result-000001.parquet, /testdata/weather/result-000002.parquet]]}, projection=[MinTemp, MaxTemp, Rainfall, Evaporation, Sunshine, WindGustDir, WindGustSpeed, WindDir9am, WindDir3pm, WindSpeed9am, WindSpeed3pm, Humidity9am, Humidity3pm, Pressure9am, Pressure3pm, Cloud9am, Cloud3pm, Temp9am, Temp3pm, RainToday, RISK_MM, RainTomorrow], file_type=parquet, sort_order_for_reorder=[WindGustDir@5 ASC NULLS LAST]
+         O(out_Cols) | DataSourceExec: file_groups={1 group: [[/testdata/weather/result-000000.parquet, /testdata/weather/result-000001.parquet, /testdata/weather/result-000002.parquet]]}, projection=[MinTemp, MaxTemp, Rainfall, Evaporation, Sunshine, WindGustDir, WindGustSpeed, WindDir9am, WindDir3pm, WindSpeed9am, WindSpeed3pm, Humidity9am, Humidity3pm, Pressure9am, Pressure3pm, Cloud9am, Cloud3pm, Temp9am, Temp3pm, RainToday, RISK_MM, RainTomorrow], file_type=parquet
         ");
     }
 
@@ -684,7 +684,7 @@ mod tests {
         assert_snapshot!(plan_costs(plan), @r"
         O((Cols+Col5)) | SortPreservingMergeExec: [WindGustDir@5 ASC NULLS LAST]
          O((Cols+Col5)*Log((Cols+Col5))) | SortExec: expr=[WindGustDir@5 ASC NULLS LAST], preserve_partitioning=[true]
-          O(out_Cols) | DataSourceExec: file_groups={3 groups: [[/testdata/weather/result-000000.parquet], [/testdata/weather/result-000001.parquet], [/testdata/weather/result-000002.parquet]]}, projection=[MinTemp, MaxTemp, Rainfall, Evaporation, Sunshine, WindGustDir, WindGustSpeed, WindDir9am, WindDir3pm, WindSpeed9am, WindSpeed3pm, Humidity9am, Humidity3pm, Pressure9am, Pressure3pm, Cloud9am, Cloud3pm, Temp9am, Temp3pm, RainToday, RISK_MM, RainTomorrow], file_type=parquet, sort_order_for_reorder=[WindGustDir@5 ASC NULLS LAST]
+          O(out_Cols) | DataSourceExec: file_groups={3 groups: [[/testdata/weather/result-000000.parquet], [/testdata/weather/result-000001.parquet], [/testdata/weather/result-000002.parquet]]}, projection=[MinTemp, MaxTemp, Rainfall, Evaporation, Sunshine, WindGustDir, WindGustSpeed, WindDir9am, WindDir3pm, WindSpeed9am, WindSpeed3pm, Humidity9am, Humidity3pm, Pressure9am, Pressure3pm, Cloud9am, Cloud3pm, Temp9am, Temp3pm, RainToday, RISK_MM, RainTomorrow], file_type=parquet
         ");
     }
 
@@ -823,7 +823,7 @@ mod tests {
         O(1) | ProjectionExec: expr=[rank() PARTITION BY [weather.RainToday] ORDER BY [weather.MaxTemp ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW@2 as rank() PARTITION BY [weather.RainToday] ORDER BY [weather.MaxTemp ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW]
          O((Cols+Col1)) | BoundedWindowAggExec: wdw=[rank() PARTITION BY [weather.RainToday] ORDER BY [weather.MaxTemp ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW: Field { "rank() PARTITION BY [weather.RainToday] ORDER BY [weather.MaxTemp ASC NULLS LAST] RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW": UInt64 }, frame: RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW], mode=[Sorted]
           O((Cols+Col1+Col0)*Log((Cols+Col1+Col0))) | SortExec: expr=[RainToday@1 ASC NULLS LAST, MaxTemp@0 ASC NULLS LAST], preserve_partitioning=[false]
-           O(out_Cols) | DataSourceExec: file_groups={1 group: [[/testdata/weather/result-000002.parquet, /testdata/weather/result-000001.parquet, /testdata/weather/result-000000.parquet]]}, projection=[MaxTemp, RainToday], file_type=parquet, sort_order_for_reorder=[RainToday@1 ASC NULLS LAST, MaxTemp@0 ASC NULLS LAST]
+           O(out_Cols) | DataSourceExec: file_groups={1 group: [[/testdata/weather/result-000000.parquet, /testdata/weather/result-000001.parquet, /testdata/weather/result-000002.parquet]]}, projection=[MaxTemp, RainToday], file_type=parquet
         "#);
     }
 
@@ -840,7 +840,7 @@ mod tests {
         O(1) | ProjectionExec: expr=[sum(weather.Rainfall) PARTITION BY [weather.WindGustDir] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING@2 as sum(weather.Rainfall) PARTITION BY [weather.WindGustDir] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING]
          O((Cols+Col1)) | WindowAggExec: wdw=[sum(weather.Rainfall) PARTITION BY [weather.WindGustDir] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING: Ok(Field { name: "sum(weather.Rainfall) PARTITION BY [weather.WindGustDir] ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING", data_type: Float64, nullable: true }), frame: WindowFrame { units: Rows, start_bound: Preceding(UInt64(NULL)), end_bound: Following(UInt64(NULL)), is_causal: false }]
           O((Cols+Col1)*Log((Cols+Col1))) | SortExec: expr=[WindGustDir@1 ASC NULLS LAST], preserve_partitioning=[false]
-           O(out_Cols) | DataSourceExec: file_groups={1 group: [[/testdata/weather/result-000000.parquet, /testdata/weather/result-000001.parquet, /testdata/weather/result-000002.parquet]]}, projection=[Rainfall, WindGustDir], file_type=parquet, sort_order_for_reorder=[WindGustDir@1 ASC NULLS LAST]
+           O(out_Cols) | DataSourceExec: file_groups={1 group: [[/testdata/weather/result-000000.parquet, /testdata/weather/result-000001.parquet, /testdata/weather/result-000002.parquet]]}, projection=[Rainfall, WindGustDir], file_type=parquet
         "#);
     }
 

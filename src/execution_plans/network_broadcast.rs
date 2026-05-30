@@ -11,6 +11,7 @@ use datafusion::physical_plan::stream::RecordBatchStreamAdapter;
 use datafusion::physical_plan::{
     DisplayAs, DisplayFormatType, ExecutionPlan, Partitioning, PlanProperties, Statistics,
 };
+use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -139,7 +140,7 @@ impl NetworkBroadcastExec {
     /// Creates a new [NetworkBroadcastExec] fed by the provided [BroadcastExec]. The input plan
     /// will be executed in a remote worker in `producer_tasks` number of tasks.
     pub fn try_new(input: Arc<dyn ExecutionPlan>, producer_tasks: usize) -> Result<Self> {
-        if !input.is::<BroadcastExec>() {
+        if !input.as_any().is::<BroadcastExec>() {
             return plan_err!("The input of a NetworkBroadcastExec can only be a BroadcastExec");
         }
 
@@ -201,6 +202,10 @@ impl DisplayAs for NetworkBroadcastExec {
 impl ExecutionPlan for NetworkBroadcastExec {
     fn name(&self) -> &str {
         "NetworkBroadcastExec"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn properties(&self) -> &Arc<PlanProperties> {
@@ -270,7 +275,7 @@ impl ExecutionPlan for NetworkBroadcastExec {
         Some(self.worker_connections.metrics.clone_inner())
     }
 
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>> {
+    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
         self.input_stage
             .partition_statistics(partition, self.schema())
     }
