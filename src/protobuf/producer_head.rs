@@ -8,7 +8,7 @@ use datafusion::common::Result;
 use datafusion::execution::TaskContext;
 use datafusion_proto::physical_plan::from_proto::parse_protobuf_partitioning;
 use datafusion_proto::physical_plan::to_proto::serialize_partitioning;
-use datafusion_proto::physical_plan::{DefaultPhysicalProtoConverter, PhysicalPlanDecodeContext};
+use datafusion_proto::physical_plan::DefaultPhysicalProtoConverter;
 use datafusion_proto::protobuf;
 use datafusion_proto::protobuf::proto_error;
 use prost::Message;
@@ -29,11 +29,11 @@ impl ProducerHead {
                 let proto_partitioning = protobuf::Partitioning::decode(v.partitioning.as_slice())
                     .map_err(|e| proto_error(e.to_string()))?;
                 let codec = DistributedCodec::new_combined_with_user(ctx.session_config());
-                let decode_ctx = PhysicalPlanDecodeContext::new(ctx, &codec);
                 let partitioning = parse_protobuf_partitioning(
                     Some(&proto_partitioning),
-                    &decode_ctx,
+                    ctx,
                     input_schema,
+                    &codec,
                     &DefaultPhysicalProtoConverter {},
                 )?
                 .ok_or_else(|| proto_error("Could not parse partitioning"))?;

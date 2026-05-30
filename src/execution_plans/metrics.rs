@@ -6,6 +6,7 @@ use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::physical_plan::ExecutionPlan;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, PlanProperties};
 use delegate::delegate;
+use std::any::Any;
 use std::fmt::{Debug, Formatter};
 
 /// A transparent wrapper that delegates all execution to its child but returns custom metrics. This node is invisible during display.
@@ -46,6 +47,7 @@ impl ExecutionPlan for MetricsWrapperExec {
         to self.inner {
             fn name(&self) -> &str;
             fn properties(&self) -> &Arc<PlanProperties>;
+            fn as_any(&self) -> &dyn Any;
         }
     }
 
@@ -83,9 +85,5 @@ impl ExecutionPlan for MetricsWrapperExec {
                 Some(all_metrics)
             }
         }
-    }
-
-    fn downcast_delegate(&self) -> Option<&dyn ExecutionPlan> {
-        Some(self.inner.as_ref())
     }
 }

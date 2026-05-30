@@ -48,6 +48,7 @@ use datafusion_proto::physical_plan::PhysicalExtensionCodec;
 use datafusion_proto::protobuf;
 use futures::TryStreamExt;
 use prost::Message;
+use std::any::Any;
 use std::error::Error;
 use std::fmt;
 use std::hash::{DefaultHasher, Hasher};
@@ -85,6 +86,10 @@ impl ExecutionPlan for CacheExec {
         "CacheExec"
     }
 
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn properties(&self) -> &Arc<PlanProperties> {
         self.child.properties()
     }
@@ -111,8 +116,9 @@ impl ExecutionPlan for CacheExec {
         // Compute the stable key from the child's file group.
         let key = self
             .child
+            .as_any()
             .downcast_ref::<DataSourceExec>()
-            .and_then(|dse| dse.data_source().downcast_ref::<FileScanConfig>())
+            .and_then(|dse| dse.data_source().as_any().downcast_ref::<FileScanConfig>())
             .map(|fsc| hash_key(&fsc.file_groups[partition]));
 
         // Cache hit: return the previously accumulated batches.
@@ -167,7 +173,7 @@ impl TaskEstimator for CachedFileScanConfigTaskEstimator {
         plan: &Arc<dyn ExecutionPlan>,
         _: &ConfigOptions,
     ) -> Option<TaskEstimation> {
-        plan.downcast_ref::<CacheExec>()?;
+        plan.as_any().downcast_ref::<CacheExec>()?;
         Some(TaskEstimation::desired(usize::MAX))
     }
 
@@ -177,13 +183,13 @@ impl TaskEstimator for CachedFileScanConfigTaskEstimator {
         task_count: usize,
         cfg: &ConfigOptions,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let Some(cache_exec) = plan.downcast_ref::<CacheExec>() else {
+        let Some(cache_exec) = plan.as_any().downcast_ref::<CacheExec>() else {
             return Ok(None);
         };
-        let Some(dse) = cache_exec.child.downcast_ref::<DataSourceExec>() else {
+        let Some(dse) = cache_exec.child.as_any().downcast_ref::<DataSourceExec>() else {
             return Ok(None);
         };
-        let Some(fsc) = dse.data_source().downcast_ref::<FileScanConfig>() else {
+        let Some(fsc) = dse.data_source().as_any().downcast_ref::<FileScanConfig>() else {
             return Ok(None);
         };
 
@@ -224,8 +230,12 @@ impl TaskEstimator for CachedFileScanConfigTaskEstimator {
 
         let mut routed = None;
         ctx.plan.apply(|node| {
-            if let Some(leaf) = node.downcast_ref::<DistributedLeafExec>()
-                && leaf.original().downcast_ref::<CacheExec>().is_some()
+            if let Some(leaf) = node.as_any().downcast_ref::<DistributedLeafExec>()
+                && leaf
+                    .original()
+                    .as_any()
+                    .downcast_ref::<CacheExec>()
+                    .is_some()
             {
                 // Sort URLs so the slot→worker mapping is deterministic across planning passes.
                 let mut urls = available_urls.to_vec();
@@ -263,7 +273,7 @@ impl PhysicalExtensionCodec for CachedFileScanCodec {
     }
 
     fn try_encode(&self, node: Arc<dyn ExecutionPlan>, _buf: &mut Vec<u8>) -> Result<()> {
-        if node.downcast_ref::<CacheExec>().is_none() {
+        if node.as_any().downcast_ref::<CacheExec>().is_none() {
             return internal_err!("Expected CacheExec, got {}", node.name());
         }
         Ok(())
@@ -285,10 +295,15 @@ impl PhysicalOptimizerRule for CachedFileScanConfigRule {
         // DataSourceExec in CacheExec the traversal has already finished with that subtree and
         // won't descend into the new CacheExec's child again.
         plan.transform_up(|node| {
-            let Some(dse) = node.downcast_ref::<DataSourceExec>() else {
+            let Some(dse) = node.as_any().downcast_ref::<DataSourceExec>() else {
                 return Ok(Transformed::no(node));
             };
-            if dse.data_source().downcast_ref::<FileScanConfig>().is_none() {
+            if dse
+                .data_source()
+                .as_any()
+                .downcast_ref::<FileScanConfig>()
+                .is_none()
+            {
                 return Ok(Transformed::no(node));
             }
             Ok(Transformed::yes(CacheExec::new(node)))

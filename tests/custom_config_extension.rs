@@ -17,6 +17,7 @@ mod tests {
     use datafusion_proto::physical_plan::PhysicalExtensionCodec;
     use futures::TryStreamExt;
     use prost::Message;
+    use std::any::Any;
     use std::fmt::Formatter;
     use std::sync::Arc;
 
@@ -149,6 +150,10 @@ mod tests {
     impl ExecutionPlan for CustomConfigExtensionRequiredExec {
         fn name(&self) -> &str {
             "CustomConfigExtensionRequiredExec"
+        }
+
+        fn as_any(&self) -> &dyn Any {
+            self
         }
 
         fn properties(&self) -> &Arc<PlanProperties> {

@@ -26,6 +26,7 @@ use datafusion_proto::protobuf::proto_error;
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use prost::Message;
+use std::any::Any;
 use std::fmt::{Display, Formatter};
 use std::sync::Arc;
 use std::time::Duration;
@@ -282,6 +283,10 @@ struct TestWorkUnitFeedTableProvider {
 
 #[async_trait]
 impl TableProvider for TestWorkUnitFeedTableProvider {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn schema(&self) -> SchemaRef {
         row_generator_schema()
     }
@@ -327,7 +332,7 @@ impl TaskEstimator for TestWorkUnitFeedTaskEstimator {
         plan: &Arc<dyn ExecutionPlan>,
         _cfg: &ConfigOptions,
     ) -> Option<TaskEstimation> {
-        let exec = plan.downcast_ref::<RowGeneratorExec>()?;
+        let exec = plan.as_any().downcast_ref::<RowGeneratorExec>()?;
         let provider = exec.feed.clone().try_into_inner().ok()?;
         Some(TaskEstimation::desired(provider.task_count))
     }
@@ -338,7 +343,7 @@ impl TaskEstimator for TestWorkUnitFeedTaskEstimator {
         task_count: usize,
         _cfg: &ConfigOptions,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let Some(exec) = plan.downcast_ref::<RowGeneratorExec>() else {
+        let Some(exec) = plan.as_any().downcast_ref::<RowGeneratorExec>() else {
             return Ok(None);
         };
         let Some(provider) = exec.feed.clone().try_into_inner().ok() else {
@@ -348,7 +353,7 @@ impl TaskEstimator for TestWorkUnitFeedTaskEstimator {
 
         // Rebuild the exec with the decided task count so its partition count matches.
         let transformed = Arc::clone(plan).transform_down(|plan| {
-            if let Some(exec) = plan.downcast_ref::<RowGeneratorExec>() {
+            if let Some(exec) = plan.as_any().downcast_ref::<RowGeneratorExec>() {
                 return Ok(Transformed::yes(Arc::new(RowGeneratorExec::new(
                     exec.feed.clone(),
                     exec.tag.clone(),
@@ -391,6 +396,10 @@ impl DisplayAs for RowGeneratorExec {
 impl ExecutionPlan for RowGeneratorExec {
     fn name(&self) -> &str {
         Self::static_name()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn properties(&self) -> &Arc<PlanProperties> {
@@ -455,14 +464,14 @@ impl ExecutionPlan for RowGeneratorExec {
     /// DataFusion's planner decide whether to use `CollectLeft` vs `Partitioned` mode for
     /// hash joins based on the real data size — small inputs (below DataFusion's threshold)
     /// become `CollectLeft` and can be broadcast.
-    fn partition_statistics(&self, _partition: Option<usize>) -> Result<Arc<Statistics>> {
+    fn partition_statistics(&self, _partition: Option<usize>) -> Result<Statistics> {
         // Rough byte estimate: assume ~32 bytes per row (tag + task + partition + letter).
         let total_byte_size = self.total_rows.saturating_mul(32);
-        Ok(Arc::new(Statistics {
+        Ok(Statistics {
             num_rows: Precision::Exact(self.total_rows),
             total_byte_size: Precision::Exact(total_byte_size),
             column_statistics: Statistics::unknown_column(&self.schema()),
-        }))
+        })
     }
 
     /// Exposes the metrics recorded by the local [`RowGeneratorFeedProvider`] (e.g. the
@@ -531,7 +540,7 @@ impl PhysicalExtensionCodec for TestWorkUnitFeedExecCodec {
     }
 
     fn try_encode(&self, node: Arc<dyn ExecutionPlan>, buf: &mut Vec<u8>) -> Result<()> {
-        let Some(exec) = node.downcast_ref::<RowGeneratorExec>() else {
+        let Some(exec) = node.as_any().downcast_ref::<RowGeneratorExec>() else {
             return internal_err!("Expected RowGeneratorExec, but was {}", node.name());
         };
 

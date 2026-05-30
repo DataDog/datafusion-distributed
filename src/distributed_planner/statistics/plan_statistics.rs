@@ -9,6 +9,7 @@ use datafusion::physical_plan::execution_plan::CardinalityEffect;
 use datafusion::physical_plan::{DisplayAs, DisplayFormatType, ExecutionPlan, PlanProperties};
 use delegate::delegate;
 use itertools::Itertools;
+use std::any::Any;
 use std::fmt::Formatter;
 use std::sync::Arc;
 
@@ -110,7 +111,7 @@ fn partition_statistics_with_children_override(
         .with_new_children(statistics_wrapped_children)?
         .partition_statistics(partition)?;
 
-    Ok(stats.as_ref().clone())
+    Ok(stats)
 }
 
 #[derive(Debug)]
@@ -128,11 +129,15 @@ impl DisplayAs for StatisticsWrapper {
 }
 
 impl ExecutionPlan for StatisticsWrapper {
-    fn partition_statistics(&self, partition: Option<usize>) -> Result<Arc<Statistics>> {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn partition_statistics(&self, partition: Option<usize>) -> Result<Statistics> {
         if partition.is_some() {
             return plan_err!("StatisticsWrapper not prepared for partition-specific stats");
         }
-        Ok(Arc::clone(&self.stats))
+        Ok(self.stats.as_ref().clone())
     }
 
     delegate! {

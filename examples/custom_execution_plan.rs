@@ -47,6 +47,7 @@ use datafusion_proto::protobuf;
 use datafusion_proto::protobuf::proto_error;
 use futures::{TryStreamExt, stream};
 use prost::Message;
+use std::any::Any;
 use std::fmt::{self, Formatter};
 use std::ops::Range;
 use std::sync::Arc;
@@ -96,6 +97,10 @@ struct NumbersTableProvider {
 
 #[async_trait]
 impl TableProvider for NumbersTableProvider {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn schema(&self) -> SchemaRef {
         numbers_schema()
     }
@@ -161,6 +166,10 @@ impl DisplayAs for NumbersExec {
 impl ExecutionPlan for NumbersExec {
     fn name(&self) -> &str {
         "NumbersExec"
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 
     fn properties(&self) -> &Arc<PlanProperties> {
@@ -262,7 +271,7 @@ impl PhysicalExtensionCodec for NumbersExecCodec {
     }
 
     fn try_encode(&self, node: Arc<dyn ExecutionPlan>, buf: &mut Vec<u8>) -> Result<()> {
-        let Some(exec) = node.downcast_ref::<NumbersExec>() else {
+        let Some(exec) = node.as_any().downcast_ref::<NumbersExec>() else {
             return internal_err!("Expected plan to be NumbersExec, but was {}", node.name());
         };
 
@@ -307,7 +316,7 @@ impl TaskEstimator for NumbersTaskEstimator {
         plan: &Arc<dyn ExecutionPlan>,
         cfg: &datafusion::config::ConfigOptions,
     ) -> Option<TaskEstimation> {
-        let plan = plan.downcast_ref::<NumbersExec>()?;
+        let plan = plan.as_any().downcast_ref::<NumbersExec>()?;
         let cfg: &NumbersConfig = cfg.extensions.get()?;
         let task_count = (plan.ranges_per_task[0].end - plan.ranges_per_task[0].start) as f64
             / cfg.numbers_per_task as f64;
@@ -321,7 +330,7 @@ impl TaskEstimator for NumbersTaskEstimator {
         task_count: usize,
         _cfg: &datafusion::config::ConfigOptions,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let Some(plan) = plan.downcast_ref::<NumbersExec>() else {
+        let Some(plan) = plan.as_any().downcast_ref::<NumbersExec>() else {
             return Ok(None);
         };
         let range = &plan.ranges_per_task[0];

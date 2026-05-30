@@ -153,13 +153,14 @@ impl Stage {
         &self,
         partition: Option<usize>,
         schema: SchemaRef,
-    ) -> Result<Arc<Statistics>> {
+    ) -> Result<Statistics> {
         match self {
             Stage::Local(local) => local.plan.partition_statistics(partition),
             Stage::Remote(remote) => Ok(remote
                 .runtime_stats
-                .clone()
-                .unwrap_or(Arc::new(Statistics::new_unknown(&schema)))),
+                .as_ref()
+                .map(|s| s.as_ref().clone())
+                .unwrap_or_else(|| Statistics::new_unknown(&schema))),
         }
     }
 }
@@ -208,7 +209,7 @@ pub async fn explain_analyze(
     executed: Arc<dyn ExecutionPlan>,
     format: DistributedMetricsFormat,
 ) -> Result<String, DataFusionError> {
-    match executed.downcast_ref::<DistributedExec>() {
+    match executed.as_any().downcast_ref::<DistributedExec>() {
         None => Ok(DisplayableExecutionPlan::with_metrics(executed.as_ref())
             .indent(true)
             .to_string()),
@@ -225,7 +226,7 @@ const LDCORNER: &str = "└"; // Left bottom corner
 const VERTICAL: &str = "│"; // Vertical line
 const HORIZONTAL: &str = "─"; // Horizontal line
 pub fn display_plan_ascii(plan: &dyn ExecutionPlan, show_metrics: bool) -> String {
-    if let Some(plan) = plan.downcast_ref::<DistributedExec>() {
+    if let Some(plan) = plan.as_any().downcast_ref::<DistributedExec>() {
         let mut f = String::new();
         display_ascii(plan, Either::Left(plan), 0, show_metrics, &mut f).unwrap();
         f
@@ -321,7 +322,7 @@ fn display_inner_ascii(
     show_metrics: bool,
     f: &mut String,
 ) -> std::fmt::Result {
-    if plan.is::<DistributedLeafExec>() {
+    if plan.as_any().is::<DistributedLeafExec>() {
         return display_inner_distributed_leaf(plan, indent, show_metrics, f);
     }
 
@@ -353,7 +354,7 @@ fn display_inner_distributed_leaf(
     show_metrics: bool,
     f: &mut String,
 ) -> std::fmt::Result {
-    let Some(leaf) = plan.downcast_ref::<DistributedLeafExec>() else {
+    let Some(leaf) = plan.as_any().downcast_ref::<DistributedLeafExec>() else {
         return Ok(());
     };
     let indent = " ".repeat(indent);
@@ -588,7 +589,7 @@ pub fn display_plan_graphviz(plan: Arc<dyn ExecutionPlan>) -> Result<String> {
 "
     )?;
 
-    if plan.is::<DistributedExec>() {
+    if plan.as_any().is::<DistributedExec>() {
         let mut max_num = 0;
         let mut all_stages = find_all_stages(&plan)
             .into_iter()
@@ -897,7 +898,7 @@ fn display_inter_task_edges(
     let mut index = 0;
     while let Some(plan) = queue.pop_front() {
         index += 1;
-        if let Some(node) = plan.downcast_ref::<NetworkShuffleExec>() {
+        if let Some(node) = plan.as_any().downcast_ref::<NetworkShuffleExec>() {
             if node.input_stage().num() != input_stage.num() {
                 continue;
             }
@@ -921,7 +922,7 @@ fn display_inter_task_edges(
                 )?;
             }
             continue;
-        } else if let Some(node) = plan.downcast_ref::<NetworkCoalesceExec>() {
+        } else if let Some(node) = plan.as_any().downcast_ref::<NetworkCoalesceExec>() {
             if node.input_stage().num() != input_stage.num() {
                 continue;
             }

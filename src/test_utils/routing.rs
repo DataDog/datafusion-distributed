@@ -18,7 +18,7 @@ use datafusion::{
 use datafusion_proto::{physical_plan::PhysicalExtensionCodec, protobuf::proto_error};
 use futures::stream;
 use prost::Message;
-use std::{fmt::Formatter, sync::Arc};
+use std::{any::Any, fmt::Formatter, sync::Arc};
 use tonic::async_trait;
 use url::Url;
 
@@ -77,6 +77,10 @@ struct URLEmitterTableProvider {
 
 #[async_trait]
 impl TableProvider for URLEmitterTableProvider {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn schema(&self) -> SchemaRef {
         url_emitter_schema()
     }
@@ -171,6 +175,10 @@ impl ExecutionPlan for URLEmitterExec {
         Self::static_name()
     }
 
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
     fn properties(&self) -> &Arc<datafusion::physical_plan::PlanProperties> {
         &self.properties
     }
@@ -226,8 +234,8 @@ impl ExecutionPlan for URLEmitterExec {
     fn partition_statistics(
         &self,
         _partition: Option<usize>,
-    ) -> datafusion::error::Result<Arc<datafusion::common::Statistics>> {
-        Ok(Arc::new(Statistics::new_unknown(&url_emitter_schema())))
+    ) -> datafusion::error::Result<datafusion::common::Statistics> {
+        Ok(Statistics::new_unknown(&url_emitter_schema()))
     }
 
     fn metrics(&self) -> Option<datafusion::physical_plan::metrics::MetricsSet> {
@@ -253,7 +261,8 @@ impl TaskEstimator for URLEmitterTaskEstimator {
         plan: &std::sync::Arc<dyn datafusion::physical_plan::ExecutionPlan>,
         _cfg: &datafusion::config::ConfigOptions,
     ) -> Option<TaskEstimation> {
-        plan.downcast_ref::<URLEmitterExec>()
+        plan.as_any()
+            .downcast_ref::<URLEmitterExec>()
             .map(|exec| TaskEstimation::desired(exec.task_count))
     }
 
@@ -263,7 +272,7 @@ impl TaskEstimator for URLEmitterTaskEstimator {
         task_count: usize,
         _cfg: &datafusion::config::ConfigOptions,
     ) -> Result<Option<Arc<dyn ExecutionPlan>>> {
-        let Some(exec) = plan.downcast_ref::<URLEmitterExec>() else {
+        let Some(exec) = plan.as_any().downcast_ref::<URLEmitterExec>() else {
             return Ok(None);
         };
         let p = exec.properties.partitioning.partition_count();
@@ -353,7 +362,7 @@ impl PhysicalExtensionCodec for URLEmitterExtensionCodec {
     }
 
     fn try_encode(&self, node: Arc<dyn ExecutionPlan>, buf: &mut Vec<u8>) -> Result<()> {
-        let Some(exec) = node.downcast_ref::<URLEmitterExec>() else {
+        let Some(exec) = node.as_any().downcast_ref::<URLEmitterExec>() else {
             return internal_err!("Expected URLEmitterExec, but was {}", node.name());
         };
 
