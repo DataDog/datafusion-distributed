@@ -35,6 +35,8 @@ use tonic::{Request, Response, Status};
 /// How many record batches to buffer from the plan execution.
 const RECORD_BATCH_BUFFER_SIZE: usize = 2;
 const WAIT_PLAN_TIMEOUT_SECS: u64 = 10;
+const FAIR_POLLING_QUERY_CPU_TIME_METRIC_NAME: &str = "query_cpu_time";
+const FAIR_POLLING_QUERY_CPU_SAMPLE_COUNT_METRIC_NAME: &str = "query_cpu_sample_count";
 
 /// Builds several per-partition streams by retrieving the appropriate entry from [TaskDataEntries]
 /// based on the task key extracted from [ExecuteTaskRequest].
@@ -93,6 +95,8 @@ pub(crate) async fn execute_local_task(
         let num_partitions_remaining = Arc::clone(&task_data.num_partitions_remaining);
         let metrics_tx = Arc::clone(&task_data.metrics_tx);
         let task_data_metrics = Arc::clone(&task_data.task_data_metrics);
+        let stage_id = key.stage_id;
+        let task_number = key.task_number;
         let key = key.clone();
         let stream = on_drop_stream(stream, move || {
             // Stream was dropped before fully consumed -- see https://github.com/datafusion-contrib/datafusion-distributed/issues/412
@@ -106,7 +110,14 @@ pub(crate) async fn execute_local_task(
                 });
                 task_data_metrics.mark_execution_finished();
                 if send_metrics {
-                    send_metrics_via_channel(&metrics_tx, &plan, d_ctx, &task_data_metrics);
+                    send_metrics_via_channel(
+                        &metrics_tx,
+                        &plan,
+                        d_ctx,
+                        stage_id,
+                        task_number,
+                        &task_data_metrics,
+                    );
                 }
             }
         });
@@ -214,17 +225,25 @@ fn send_metrics_via_channel(
     metrics_tx: &Arc<Mutex<Option<Sender<TaskMetrics>>>>,
     plan: &Arc<dyn ExecutionPlan>,
     dt_ctx: DistributedTaskContext,
+    stage_id: u64,
+    task_number: u64,
     task_data_metrics: &Arc<TaskDataMetrics>,
 ) {
     let mut pre_order_plan_metrics = vec![];
+    let mut fair_polling_query_cpu = FairPollingQueryCpuMetrics::default();
     let _ = plan.apply_with_dt_ctx(dt_ctx, |node, _| {
+        let node_metrics = node.metrics();
+        if let Some(metrics) = &node_metrics {
+            fair_polling_query_cpu.add_from_metrics(metrics);
+        }
         pre_order_plan_metrics.push(
-            node.metrics()
-                .and_then(|m| df_metrics_set_to_proto(&m).ok())
+            node_metrics
+                .and_then(|metrics| df_metrics_set_to_proto(&metrics).ok())
                 .unwrap_or_default(),
         );
         Ok(TreeNodeRecursion::Continue)
     });
+    fair_polling_query_cpu.log_if_present(stage_id, task_number, dt_ctx);
 
     let tx = {
         let mut guard = match metrics_tx.lock() {
@@ -239,6 +258,51 @@ fn send_metrics_via_channel(
         pre_order_plan_metrics,
         task_metrics: Some(task_data_metrics.to_proto_metrics_set()),
     });
+}
+
+#[derive(Default)]
+struct FairPollingQueryCpuMetrics {
+    cpu_nanos: usize,
+    sample_count: usize,
+    export_count: usize,
+}
+
+impl FairPollingQueryCpuMetrics {
+    fn add_from_metrics(&mut self, metrics: &datafusion::physical_plan::metrics::MetricsSet) {
+        let sample_count = metrics
+            .sum_by_name(FAIR_POLLING_QUERY_CPU_SAMPLE_COUNT_METRIC_NAME)
+            .map(|value| value.as_usize())
+            .unwrap_or(0);
+        if sample_count == 0 {
+            return;
+        }
+
+        let cpu_nanos = metrics
+            .sum_by_name(FAIR_POLLING_QUERY_CPU_TIME_METRIC_NAME)
+            .map(|value| value.as_usize())
+            .unwrap_or(0);
+
+        self.cpu_nanos = self.cpu_nanos.saturating_add(cpu_nanos);
+        self.sample_count = self.sample_count.saturating_add(sample_count);
+        self.export_count = self.export_count.saturating_add(1);
+    }
+
+    fn log_if_present(&self, stage_id: u64, task_number: u64, dt_ctx: DistributedTaskContext) {
+        if self.sample_count == 0 {
+            return;
+        }
+
+        log::info!(
+            "Distributed worker fair-polling query CPU metrics finalized: stage_id={} task_number={} task_index={} task_count={} query_cpu_time_nanos={} query_cpu_sample_count={} query_cpu_export_count={}",
+            stage_id,
+            task_number,
+            dt_ctx.task_index,
+            dt_ctx.task_count,
+            self.cpu_nanos,
+            self.sample_count,
+            self.export_count,
+        );
+    }
 }
 
 /// Garbage collects values sub-arrays.
