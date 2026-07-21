@@ -72,6 +72,12 @@ It receives a `WorkerQueryContext` with two fields:
 - `headers` — the HTTP headers from the incoming request, handy for metadata like
   authentication tokens or per-query configuration.
 
+Implementations that need to trace or account for worker plan setup can also
+override `WorkerSessionBuilder::run_plan_setup`. Its callback covers physical
+plan decoding, worker plan hooks, and initial sampler startup. A wrapper that
+succeeds must call the callback exactly once and return its result. Builders composed with
+`MappedWorkerSessionBuilderExt::map` retain this behavior automatically.
+
 ```{note}
 A worker only *executes* fragments — it never plans queries. So it needs your
 codecs (to decode any custom nodes) but **not** the distributed planner or

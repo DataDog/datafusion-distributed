@@ -83,16 +83,30 @@ impl Worker {
                 })
                 .await?;
 
-            let codec = DistributedCodec::new_combined_with_user(session_state.config());
-            let task_ctx = session_state.task_ctx();
-            let proto_node = PhysicalPlanNode::try_decode(request.plan_proto.as_ref())?;
-            let mut plan = proto_node.try_into_physical_plan(&task_ctx, &codec)?;
+            let mut plan_setup = None;
+            self.session_builder
+                .run_plan_setup(&session_state, &mut || {
+                    let codec = DistributedCodec::new_combined_with_user(session_state.config());
+                    let task_ctx = session_state.task_ctx();
+                    let proto_node = PhysicalPlanNode::try_decode(request.plan_proto.as_ref())?;
+                    let mut plan = proto_node.try_into_physical_plan(&task_ctx, &codec)?;
 
-            for hook in self.hooks.on_plan.iter() {
-                plan = hook(plan, session_state.config())?;
-            }
-            load_info_rxs =
-                SamplerExec::kick_off_first_sampler(Arc::clone(&plan), Arc::clone(&task_ctx))?;
+                    for hook in self.hooks.on_plan.iter() {
+                        plan = hook(plan, session_state.config())?;
+                    }
+                    let sampler_receivers = SamplerExec::kick_off_first_sampler(
+                        Arc::clone(&plan),
+                        Arc::clone(&task_ctx),
+                    )?;
+                    plan_setup = Some((plan, task_ctx, sampler_receivers));
+                    Ok(())
+                })?;
+            let Some((plan, task_ctx, sampler_receivers)) = plan_setup else {
+                return internal_err!(
+                    "WorkerSessionBuilder::run_plan_setup did not run the setup callback"
+                );
+            };
+            load_info_rxs = sampler_receivers;
 
             // Initialize partition count to the number of partitions in the stage
             Ok::<_, DataFusionError>(TaskData {

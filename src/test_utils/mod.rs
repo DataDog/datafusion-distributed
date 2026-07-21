@@ -10,3 +10,4 @@ pub mod routing;
 pub mod session_context;
 pub mod test_work_unit_feed;
 pub mod work_unit_file_scan;
+pub mod worker_plan_setup;
