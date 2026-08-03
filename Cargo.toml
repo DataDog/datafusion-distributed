@@ -4,6 +4,11 @@ members = ["benchmarks", "cli", "console"]
 [workspace.dependencies]
 datafusion = { version = "54.0.0", default-features = false }
 datafusion-proto = { version = "54.0.0" }
+arrow = { version = ">=58, <60", features = ["test_utils"] }
+arrow-flight = { version = ">=58, <60" }
+arrow-select = { version = ">=58, <60" }
+arrow-ipc = { version = ">=58, <60", features = ["zstd"] }
+parquet = { version = ">=58, <60" }
 
 [package]
 name = "datafusion-distributed"
@@ -48,16 +53,16 @@ bincode = "1"
 tonic-prost = "0.14.2"
 
 # grpc-specific features
-arrow-flight = { version = ">=58, <60", optional = true }
-arrow-select = { version = ">=58, <60", optional = true }
-arrow-ipc = { version = ">=58, <60", features = ["zstd"], optional = true }
+arrow-flight = { workspace = true, optional = true }
+arrow-select = { workspace = true, optional = true }
+arrow-ipc = { workspace = true, optional = true }
 tonic = { version = "0.14.1", features = ["transport"], optional = true }
 tower = { version = "0.5.2", optional = true }
 
 # integration_tests deps
 insta = { version = "1.46.0", features = ["filters"], optional = true }
-parquet = { version = ">=58, <60", optional = true }
-arrow = { version = ">=58, <60", optional = true, features = ["test_utils"] }
+parquet = { workspace = true, optional = true }
+arrow = { workspace = true, optional = true }
 hyper-util = { version = "0.1.16", optional = true }
 
 [features]
@@ -85,8 +90,8 @@ sysinfo = ["dep:sysinfo"]
 datafusion-distributed-benchmarks = { path = "benchmarks" }
 structopt = "0.3"
 insta = { version = "1.46.0", features = ["filters"] }
-parquet = ">=58, <60"
-arrow = { version = ">=58, <60", features = ["test_utils"] }
+parquet = { workspace = true }
+arrow = { workspace = true }
 tokio-stream = { version = "0.1.17", features = ["sync"] }
 hyper-util = "0.1.16"
 pretty_assertions = "1.4"
