@@ -92,6 +92,11 @@ hyper-util = "0.1.16"
 pretty_assertions = "1.4"
 test-case = "3.3.1"
 
+[patch.crates-io]
+datafusion = { git = "https://github.com/DataDog/datafusion", rev = "f6d73a84917e0afcc6c27c3ebe246332ac30d71d" }
+datafusion-cli = { git = "https://github.com/DataDog/datafusion", rev = "f6d73a84917e0afcc6c27c3ebe246332ac30d71d" }
+datafusion-proto = { git = "https://github.com/DataDog/datafusion", rev = "f6d73a84917e0afcc6c27c3ebe246332ac30d71d" }
+
 [workspace.lints.clippy]
 disallowed_types = "deny"
 disallowed-methods = "deny"
