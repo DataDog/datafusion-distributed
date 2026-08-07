@@ -22,8 +22,8 @@ futures = "0.3.31"
 url = "2.5.7"
 arrow = { version = ">=58, <60", features = ["test_utils"] }
 tonic = { version = "0.14.1", features = ["transport"] }
-tpchgen = { git = "https://github.com/clflushopt/tpchgen-rs", rev = "438e9c2dbc25b2fff82c0efc08b3f13b5707874f" }
-tpchgen-arrow = { git = "https://github.com/clflushopt/tpchgen-rs", rev = "438e9c2dbc25b2fff82c0efc08b3f13b5707874f" }
+tpchgen = { git = "https://github.com/clflushopt/tpchgen-rs", rev = "4f6bf4c5ab40511c8fdef5888fc8d022e5e546d7" }
+tpchgen-arrow = { git = "https://github.com/clflushopt/tpchgen-rs", rev = "4f6bf4c5ab40511c8fdef5888fc8d022e5e546d7" }
 reqwest = "0.12"
 zip = "6.0"
 axum = "0.7"

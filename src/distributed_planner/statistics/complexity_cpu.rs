@@ -222,7 +222,7 @@ pub(super) fn complexity_cpu(node: &Arc<dyn ExecutionPlan>) -> Complexity {
         return n.unwrap_or(Complexity::Constant(1.));
     }
 
-    // RepartitionExec with Hash: computes hash per row + take_arrays
+    // RepartitionExec: computes partition keys per row and copies the output columns.
     // https://github.com/apache/datafusion/blob/branch-52/datafusion/physical-plan/src/repartition/mod.rs
     if let Some(node) = node.downcast_ref::<RepartitionExec>() {
         // It needs to copy all the data for chunking it to the different output partitions...
@@ -233,6 +233,11 @@ pub(super) fn complexity_cpu(node: &Arc<dyn ExecutionPlan>) -> Complexity {
             Partitioning::Hash(expressions, _) => {
                 for expr in expressions {
                     n = n.plus(hashed_or_sorted_key_complexity(expr))
+                }
+            }
+            Partitioning::Range(range) => {
+                for sort_expr in range.ordering() {
+                    n = n.plus(hashed_or_sorted_key_complexity(&sort_expr.expr))
                 }
             }
             Partitioning::RoundRobinBatch(_) => {}
