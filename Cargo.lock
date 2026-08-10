@@ -2288,11 +2288,13 @@ dependencies = [
  "datafusion-distributed",
  "datafusion-distributed-benchmarks",
  "futures",
+ "hyper-util",
  "ratatui",
  "structopt",
  "tokio",
  "tokio-stream",
  "tonic",
+ "tower",
  "url",
 ]
 
@@ -5455,6 +5457,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ef86cd5876211988985292b91c96a8f2d298df24e75989a43a3c73f2d4d8168b"
 dependencies = [
  "aws-lc-rs",
+ "log",
  "once_cell",
  "ring",
  "rustls-pki-types",
@@ -6387,9 +6390,11 @@ dependencies = [
  "hyper-util",
  "percent-encoding",
  "pin-project",
+ "rustls-native-certs",
  "socket2 0.6.3",
  "sync_wrapper",
  "tokio",
+ "tokio-rustls 0.26.4",
  "tokio-stream",
  "tower",
  "tower-layer",

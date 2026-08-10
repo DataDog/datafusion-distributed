@@ -11,7 +11,12 @@ crossterm = "0.29.0"
 futures = "0.3.31"
 ratatui = "0.30.0"
 tokio = { version = "1.49.0", features = ["full"] }
-tonic = "0.14.2"
+# `tls-ring` turns on the TLS stack; `tls-native-roots` lets `--worker-origin` reach a worker
+# whose certificate chains to a CA the machine already trusts, without `--ca-cert`.
+tonic = { version = "0.14.2", features = ["tls-ring", "tls-native-roots"] }
+# Dialing an address the endpoint URI does not name needs a custom connector.
+tower = { version = "0.5.2", features = ["util"] }
+hyper-util = { version = "0.1.16", features = ["tokio"] }
 datafusion-distributed = { path = "..", features = ["integration", "system-metrics"] }
 url = "2.5.7"
 tokio-stream = "0.1.18"

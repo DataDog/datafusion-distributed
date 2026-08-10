@@ -78,11 +78,12 @@ impl App {
         self.maybe_discover_workers().await;
 
         // Attempt connection for workers in Connecting or Disconnected state
-        for worker in &mut self.workers {
-            if worker.should_retry_connection() {
-                worker.try_connect().await;
-            }
-        }
+        let reconnect_workers = self
+            .workers
+            .iter_mut()
+            .filter(|worker| worker.should_retry_connection())
+            .map(|worker| worker.try_connect());
+        futures::future::join_all(reconnect_workers).await;
 
         // Poll all connected workers in parallel with timeout
         let poll_workers: Vec<_> = self
