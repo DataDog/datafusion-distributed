@@ -1,3 +1,4 @@
+use crate::connector::WorkerConnector;
 use crate::state::{ClusterViewState, SortColumn, SortDirection, View, WorkerViewState};
 use crate::worker::{ConnectionStatus, WorkerConn, discover_cluster_workers};
 use datafusion::common::HashSet;
@@ -23,6 +24,8 @@ pub(crate) struct App {
     pub(crate) current_throughput: f64,
     /// Seed URL for worker discovery via `GetClusterWorkers`.
     seed_url: Url,
+    /// Transport policy shared by discovery and every per-worker connection.
+    connector: WorkerConnector,
     /// Last time we ran worker discovery.
     last_discovery: Option<Instant>,
 }
@@ -44,7 +47,7 @@ const DISCOVERY_INTERVAL: Duration = Duration::from_secs(5);
 
 impl App {
     /// Create a new App that discovers workers via `GetClusterWorkers` on the seed URL.
-    pub(crate) fn new(seed_url: Url) -> Self {
+    pub(crate) fn new(seed_url: Url, connector: WorkerConnector) -> Self {
         App {
             workers: Vec::new(),
             active_query_count: 0,
@@ -60,6 +63,7 @@ impl App {
             prev_output_rows_time: None,
             current_throughput: 0.0,
             seed_url,
+            connector,
             last_discovery: None,
         }
     }
@@ -74,11 +78,12 @@ impl App {
         self.maybe_discover_workers().await;
 
         // Attempt connection for workers in Connecting or Disconnected state
-        for worker in &mut self.workers {
-            if worker.should_retry_connection() {
-                worker.try_connect().await;
-            }
-        }
+        let reconnect_workers = self
+            .workers
+            .iter_mut()
+            .filter(|worker| worker.should_retry_connection())
+            .map(|worker| worker.try_connect());
+        futures::future::join_all(reconnect_workers).await;
 
         // Poll all connected workers in parallel with timeout
         let poll_workers: Vec<_> = self
@@ -112,7 +117,8 @@ impl App {
 
         self.last_discovery = Some(Instant::now());
 
-        let discovered_urls = match discover_cluster_workers(&self.seed_url).await {
+        let discovered_urls = match discover_cluster_workers(&self.connector, &self.seed_url).await
+        {
             Ok(urls) => urls,
             Err(_) => return,
         };
@@ -123,7 +129,8 @@ impl App {
         // Add new workers
         for url in &discovered_urls {
             if !known_urls.contains(url) {
-                self.workers.push(WorkerConn::new(url.clone()));
+                self.workers
+                    .push(WorkerConn::new(url.clone(), self.connector.clone()));
             }
         }
 
