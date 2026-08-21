@@ -1,10 +1,12 @@
 mod app;
+mod connector;
 mod input;
 mod state;
 mod ui;
 mod worker;
 
 use app::App;
+use connector::WorkerConnector;
 use crossterm::event::{self, Event};
 use ratatui::DefaultTerminal;
 use std::time::{Duration, Instant};
@@ -35,7 +37,7 @@ async fn main() -> color_eyre::Result<()> {
     let seed_url = Url::parse(&format!("http://localhost:{}", args.port)).expect("valid URL");
 
     let poll_interval = Duration::from_millis(args.poll_interval);
-    let mut app = App::new(seed_url);
+    let mut app = App::new(seed_url, WorkerConnector);
 
     let mut terminal = ratatui::init();
     terminal.clear()?;

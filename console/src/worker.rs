@@ -1,3 +1,4 @@
+use crate::connector::WorkerConnector;
 use datafusion::common::{HashMap, HashSet};
 use datafusion_distributed::grpc::{
     GetClusterWorkersRequest, GetTaskProgressRequest, ObservabilityServiceClient, PingRequest,
@@ -17,6 +18,7 @@ pub(crate) const METRIC_HISTORY_LEN: usize = 300;
 /// Tracks connection and task state for a single worker.
 pub(crate) struct WorkerConn {
     pub(crate) url: Url,
+    connector: WorkerConnector,
     client: Option<ObservabilityServiceClient<Channel>>,
     pub(crate) connection_status: ConnectionStatus,
     pub(crate) tasks: Vec<TaskProgress>,
@@ -63,9 +65,10 @@ pub(crate) enum ConnectionStatus {
 
 impl WorkerConn {
     /// Create a new WorkerConn in the initial Connecting state.
-    pub(crate) fn new(url: Url) -> Self {
+    pub(crate) fn new(url: Url, connector: WorkerConnector) -> Self {
         Self {
             url,
+            connector,
             client: None,
             connection_status: ConnectionStatus::Connecting,
             tasks: Vec::new(),
@@ -89,7 +92,7 @@ impl WorkerConn {
     pub(crate) async fn try_connect(&mut self) {
         self.last_reconnect_attempt = Some(Instant::now());
 
-        match ObservabilityServiceClient::connect(self.url.to_string()).await {
+        match self.connector.connect(&self.url).await {
             Ok(mut client) => match client.ping(PingRequest {}).await {
                 Ok(_) => {
                     self.client = Some(client);
@@ -368,8 +371,12 @@ fn push_history(buf: &mut VecDeque<u64>, value: u64) {
 }
 
 /// Connects to a seed worker and calls `GetClusterWorkers` to discover all worker URLs.
-pub(crate) async fn discover_cluster_workers(seed_url: &Url) -> Result<Vec<Url>, String> {
-    let mut client = ObservabilityServiceClient::connect(seed_url.to_string())
+pub(crate) async fn discover_cluster_workers(
+    connector: &WorkerConnector,
+    seed_url: &Url,
+) -> Result<Vec<Url>, String> {
+    let mut client = connector
+        .connect(seed_url)
         .await
         .map_err(|e| format!("Failed to connect to seed worker {seed_url}: {e}"))?;
 
@@ -386,8 +393,8 @@ pub(crate) async fn discover_cluster_workers(seed_url: &Url) -> Result<Vec<Url>,
     let urls = response
         .into_inner()
         .worker_urls
-        .into_iter()
-        .filter_map(|s| Url::parse(&s).ok())
+        .iter()
+        .filter_map(|reported| connector.worker_url(reported).ok())
         .collect();
 
     Ok(urls)
