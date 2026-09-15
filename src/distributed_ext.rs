@@ -3,7 +3,7 @@ use crate::config_extension_ext::{
     set_distributed_option_extension, set_distributed_option_extension_from_headers,
 };
 use crate::events::{
-    DesiredTaskCountHandler, DesiredTaskCountHandlers, RouteTasksHandler, RouteTasksHandlers,
+    DesiredTaskCountHandler, DesiredTaskCountHandlers, RouteTaskHandler, RouteTaskHandlers,
     ScaleUpLeafNodeHandler, ScaleUpLeafNodeHandlers, WorkerPlanRewriteHandler,
     WorkerPlanRewriteHandlers,
 };
@@ -199,25 +199,20 @@ pub trait DistributedExt: Sized {
     ///
     /// Example:
     ///
-    /// ```
-    /// # use async_trait::async_trait;
+    /// ```rust
     /// # use datafusion::common::DataFusionError;
-    /// # use datafusion::execution::{SessionState, SessionStateBuilder};
-    /// # use datafusion::prelude::SessionConfig;
+    /// # use datafusion::execution::SessionStateBuilder;
     /// # use url::Url;
-    /// # use std::sync::Arc;
-    /// # use datafusion_distributed::{WorkerResolver, DistributedExt, SessionStateBuilderExt, WorkerQueryContext};
+    /// # use datafusion_distributed::{WorkerResolver, DistributedExt, SessionStateBuilderExt};
     ///
     /// struct CustomWorkerResolver;
     ///
-    /// #[async_trait]
     /// impl WorkerResolver for CustomWorkerResolver {
     ///     fn get_urls(&self) -> Result<Vec<Url>, DataFusionError> {
     ///         todo!()
     ///     }
     /// }
     ///
-    /// // This tweaks the SessionState so that it can plan for distributed queries and execute them.
     /// let state = SessionStateBuilder::new()
     ///     .with_distributed_worker_resolver(CustomWorkerResolver)
     ///     .with_distributed_planner()
@@ -225,7 +220,7 @@ pub trait DistributedExt: Sized {
     /// ```
     fn with_distributed_worker_resolver<T: WorkerResolver + 'static>(self, resolver: T) -> Self;
 
-    /// Same as [DistributedExt::with_distributed_channel_resolver] but with an in-place mutation.
+    /// Same as [DistributedExt::with_distributed_worker_resolver] but with an in-place mutation.
     fn set_distributed_worker_resolver<T: WorkerResolver + 'static>(&mut self, resolver: T);
 
     /// This is what tells Distributed DataFusion how to build a Worker gRPC client out of a worker URL.
@@ -374,6 +369,20 @@ pub trait DistributedExt: Sized {
 
     /// Same as [DistributedExt::with_distributed_metrics_collection] but with an in-place mutation.
     fn set_distributed_metrics_collection(&mut self, enabled: bool) -> Result<(), DataFusionError>;
+
+    /// Collects completed dynamic filters from worker tasks so they can be displayed in the
+    /// distributed plan. This does not enable or disable dynamic filtering during execution.
+    fn with_distributed_dynamic_filter_collection(
+        self,
+        enabled: bool,
+    ) -> Result<Self, DataFusionError>;
+
+    /// Same as [`DistributedExt::with_distributed_dynamic_filter_collection`] but with an in-place
+    /// mutation.
+    fn set_distributed_dynamic_filter_collection(
+        &mut self,
+        enabled: bool,
+    ) -> Result<(), DataFusionError>;
 
     /// Enables children isolator unions for distributing UNION operations across as many tasks as
     /// the sum of all the tasks required for each child.
@@ -659,40 +668,38 @@ pub trait DistributedExt: Sized {
     /// in-place mutation.
     fn set_distributed_scale_up_leaf_node_handler<T: ScaleUpLeafNodeHandler>(&mut self, handler: T);
 
-    /// Registers a handler that maps a stage's task slots to worker URLs before execution.
-    /// A response must contain one URL per task, in task-index order.
-    ///
-    /// A function with the following signature can be provided as argument:
+    /// Registers an asynchronous handler that assigns each distributed task to a worker.
+    /// The handler may call the event's dialer multiple times to implement retries or failover.
     ///
     /// ```rust
+    /// # use async_trait::async_trait;
     /// # use datafusion::error::Result;
     /// # use datafusion::execution::SessionStateBuilder;
-    /// # use datafusion_distributed::{DistributedExt, DistributedGetterExt, RouteTasksEvent, RouteTasksEventResponse};
+    /// # use datafusion_distributed::{ok_or_some_err, DistributedExt, RouteTaskEvent, RouteTaskEventResponse, RouteTaskHandler};
+    /// # use rand::prelude::IndexedRandom;
     ///
-    /// fn handle_custom_route_tasks(event: RouteTasksEvent) -> Option<Result<RouteTasksEventResponse>> {
-    ///     let routing = event.task_ctx.session_config()
-    ///         .get_distributed_worker_resolver()
-    ///         .and_then(|resolver| resolver.get_urls())
-    ///         .map(|workers| RouteTasksEventResponse::new(
-    ///             workers.into_iter().cycle().take(event.task_count).collect()
-    ///         ));
-    ///     Some(routing)
+    /// struct AssignToWorker;
+    ///
+    /// #[async_trait]
+    /// impl RouteTaskHandler for AssignToWorker {
+    ///     async fn handle(
+    ///         &self,
+    ///         event: RouteTaskEvent<'_>,
+    ///     ) -> Option<Result<RouteTaskEventResponse>> {
+    ///         let urls = ok_or_some_err!(event.worker_resolver.get_urls());
+    ///         let url = urls.choose(&mut rand::rng()).expect("No URLs available");
+    ///         Some(event.dialer.dial(url.clone()).await)
+    ///     }
     /// }
     ///
     /// SessionStateBuilder::new()
-    ///     .with_distributed_route_tasks_handler(handle_custom_route_tasks);
+    ///     .with_distributed_route_task_handler(AssignToWorker);
     /// ```
-    ///
-    /// ```text
-    /// task 0  ──► http://worker1
-    /// task 1  ──► http://worker2     RouteTasksHandler
-    /// task 2  ──► http://worker3
-    /// ```
-    fn with_distributed_route_tasks_handler<T: RouteTasksHandler>(self, handler: T) -> Self;
+    fn with_distributed_route_task_handler<T: RouteTaskHandler>(self, handler: T) -> Self;
 
-    /// Same as [DistributedExt::with_distributed_route_tasks_handler] but with an in-place
+    /// Same as [DistributedExt::with_distributed_route_task_handler] but with an in-place
     /// mutation.
-    fn set_distributed_route_tasks_handler<T: RouteTasksHandler>(&mut self, handler: T);
+    fn set_distributed_route_task_handler<T: RouteTaskHandler>(&mut self, handler: T);
 
     /// Registers a handler that rewrites a decoded worker stage plan before it is executed.
     ///
@@ -711,18 +718,27 @@ pub trait DistributedExt: Sized {
     /// the coordinator session context is not used by workers
     ///
     /// ```rust
+    /// # use async_trait::async_trait;
     /// # use datafusion::common::Result;
     /// # use datafusion::execution::SessionState;
-    /// # use datafusion_distributed::{DistributedExt, Worker, WorkerPlanRewriteEvent, WorkerPlanRewriteEventResponse, WorkerQueryContext};
+    /// # use datafusion_distributed::{DistributedExt, Worker, WorkerPlanRewriteEvent, WorkerPlanRewriteEventResponse, WorkerPlanRewriteHandler, WorkerQueryContext};
+    ///
+    /// struct Passthrough;
+    ///
+    /// #[async_trait]
+    /// impl WorkerPlanRewriteHandler for Passthrough {
+    ///     async fn handle(
+    ///         &self,
+    ///         event: WorkerPlanRewriteEvent<'_>,
+    ///     ) -> Result<WorkerPlanRewriteEventResponse> {
+    ///         Ok(WorkerPlanRewriteEventResponse::new(event.plan))
+    ///     }
+    /// }
     ///
     /// async fn build_worker_session(ctx: WorkerQueryContext) -> Result<SessionState> {
     ///     Ok(ctx
     ///         .builder
-    ///         .with_distributed_worker_plan_rewrite_handler(
-    ///             |event: WorkerPlanRewriteEvent<'_>| {
-    ///                 Ok(WorkerPlanRewriteEventResponse::new(event.plan))
-    ///             },
-    ///         )
+    ///         .with_distributed_worker_plan_rewrite_handler(Passthrough)
     ///         .build())
     /// }
     ///
@@ -800,6 +816,15 @@ impl DistributedExt for SessionConfig {
     fn set_distributed_metrics_collection(&mut self, enabled: bool) -> Result<(), DataFusionError> {
         let d_cfg = DistributedConfig::from_config_options_mut(self.options_mut())?;
         d_cfg.collect_metrics = enabled;
+        Ok(())
+    }
+
+    fn set_distributed_dynamic_filter_collection(
+        &mut self,
+        enabled: bool,
+    ) -> Result<(), DataFusionError> {
+        let d_cfg = DistributedConfig::from_config_options_mut(self.options_mut())?;
+        d_cfg.collect_dynamic_filters = enabled;
         Ok(())
     }
 
@@ -911,8 +936,8 @@ impl DistributedExt for SessionConfig {
         ScaleUpLeafNodeHandlers::push_custom(self, Arc::new(h));
     }
 
-    fn set_distributed_route_tasks_handler<H: RouteTasksHandler>(&mut self, h: H) {
-        RouteTasksHandlers::push_custom(self, Arc::new(h));
+    fn set_distributed_route_task_handler<H: RouteTaskHandler>(&mut self, h: H) {
+        RouteTaskHandlers::push_custom(self, Arc::new(h));
     }
 
     fn set_distributed_worker_plan_rewrite_handler<H: WorkerPlanRewriteHandler>(&mut self, h: H) {
@@ -956,6 +981,10 @@ impl DistributedExt for SessionConfig {
             #[call(set_distributed_metrics_collection)]
             #[expr($?;Ok(self))]
             fn with_distributed_metrics_collection(mut self, enabled: bool) -> Result<Self, DataFusionError>;
+
+            #[call(set_distributed_dynamic_filter_collection)]
+            #[expr($?;Ok(self))]
+            fn with_distributed_dynamic_filter_collection(mut self, enabled: bool) -> Result<Self, DataFusionError>;
 
             #[call(set_distributed_children_isolator_unions)]
             #[expr($?;Ok(self))]
@@ -1019,9 +1048,9 @@ impl DistributedExt for SessionConfig {
             #[expr($;self)]
             fn with_distributed_scale_up_leaf_node_handler<H: ScaleUpLeafNodeHandler>(mut self, h: H) -> Self;
 
-            #[call(set_distributed_route_tasks_handler)]
+            #[call(set_distributed_route_task_handler)]
             #[expr($;self)]
-            fn with_distributed_route_tasks_handler<H: RouteTasksHandler>(mut self, h: H) -> Self;
+            fn with_distributed_route_task_handler<H: RouteTaskHandler>(mut self, h: H) -> Self;
 
             #[call(set_distributed_worker_plan_rewrite_handler)]
             #[expr($;self)]
@@ -1082,6 +1111,11 @@ impl DistributedExt for SessionStateBuilder {
             #[call(set_distributed_metrics_collection)]
             #[expr($?;Ok(self))]
             fn with_distributed_metrics_collection(mut self, enabled: bool) -> Result<Self, DataFusionError>;
+
+            fn set_distributed_dynamic_filter_collection(&mut self, enabled: bool) -> Result<(), DataFusionError>;
+            #[call(set_distributed_dynamic_filter_collection)]
+            #[expr($?;Ok(self))]
+            fn with_distributed_dynamic_filter_collection(mut self, enabled: bool) -> Result<Self, DataFusionError>;
 
             fn set_distributed_children_isolator_unions(&mut self, enabled: bool) -> Result<(), DataFusionError>;
             #[call(set_distributed_children_isolator_unions)]
@@ -1165,10 +1199,10 @@ impl DistributedExt for SessionStateBuilder {
             #[expr($;self)]
             fn with_distributed_scale_up_leaf_node_handler<H: ScaleUpLeafNodeHandler>(mut self, h: H) -> Self;
 
-            fn set_distributed_route_tasks_handler<H: RouteTasksHandler>(&mut self, h: H);
-            #[call(set_distributed_route_tasks_handler)]
+            fn set_distributed_route_task_handler<H: RouteTaskHandler>(&mut self, h: H);
+            #[call(set_distributed_route_task_handler)]
             #[expr($;self)]
-            fn with_distributed_route_tasks_handler<H: RouteTasksHandler>(mut self, h: H) -> Self;
+            fn with_distributed_route_task_handler<H: RouteTaskHandler>(mut self, h: H) -> Self;
 
             fn set_distributed_worker_plan_rewrite_handler<H: WorkerPlanRewriteHandler>(&mut self, h: H);
             #[call(set_distributed_worker_plan_rewrite_handler)]
@@ -1233,6 +1267,11 @@ impl DistributedExt for SessionState {
             #[expr($?;Ok(self))]
             fn with_distributed_metrics_collection(mut self, enabled: bool) -> Result<Self, DataFusionError>;
 
+            fn set_distributed_dynamic_filter_collection(&mut self, enabled: bool) -> Result<(), DataFusionError>;
+            #[call(set_distributed_dynamic_filter_collection)]
+            #[expr($?;Ok(self))]
+            fn with_distributed_dynamic_filter_collection(mut self, enabled: bool) -> Result<Self, DataFusionError>;
+
             fn set_distributed_children_isolator_unions(&mut self, enabled: bool) -> Result<(), DataFusionError>;
             #[call(set_distributed_children_isolator_unions)]
             #[expr($?;Ok(self))]
@@ -1315,10 +1354,10 @@ impl DistributedExt for SessionState {
             #[expr($;self)]
             fn with_distributed_scale_up_leaf_node_handler<H: ScaleUpLeafNodeHandler>(mut self, h: H) -> Self;
 
-            fn set_distributed_route_tasks_handler<H: RouteTasksHandler>(&mut self, h: H);
-            #[call(set_distributed_route_tasks_handler)]
+            fn set_distributed_route_task_handler<H: RouteTaskHandler>(&mut self, h: H);
+            #[call(set_distributed_route_task_handler)]
             #[expr($;self)]
-            fn with_distributed_route_tasks_handler<H: RouteTasksHandler>(mut self, h: H) -> Self;
+            fn with_distributed_route_task_handler<H: RouteTaskHandler>(mut self, h: H) -> Self;
 
             fn set_distributed_worker_plan_rewrite_handler<H: WorkerPlanRewriteHandler>(&mut self, h: H);
             #[call(set_distributed_worker_plan_rewrite_handler)]
@@ -1375,6 +1414,11 @@ impl DistributedExt for SessionContext {
             #[call(set_distributed_metrics_collection)]
             #[expr($?;Ok(self))]
             fn with_distributed_metrics_collection(self, enabled: bool) -> Result<Self, DataFusionError>;
+
+            fn set_distributed_dynamic_filter_collection(&mut self, enabled: bool) -> Result<(), DataFusionError>;
+            #[call(set_distributed_dynamic_filter_collection)]
+            #[expr($?;Ok(self))]
+            fn with_distributed_dynamic_filter_collection(self, enabled: bool) -> Result<Self, DataFusionError>;
 
             fn set_distributed_children_isolator_unions(&mut self, enabled: bool) -> Result<(), DataFusionError>;
             #[call(set_distributed_children_isolator_unions)]
@@ -1458,10 +1502,10 @@ impl DistributedExt for SessionContext {
             #[expr($;self)]
             fn with_distributed_scale_up_leaf_node_handler<H: ScaleUpLeafNodeHandler>(self, h: H) -> Self;
 
-            fn set_distributed_route_tasks_handler<H: RouteTasksHandler>(&mut self, h: H);
-            #[call(set_distributed_route_tasks_handler)]
+            fn set_distributed_route_task_handler<H: RouteTaskHandler>(&mut self, h: H);
+            #[call(set_distributed_route_task_handler)]
             #[expr($;self)]
-            fn with_distributed_route_tasks_handler<H: RouteTasksHandler>(self, h: H) -> Self;
+            fn with_distributed_route_task_handler<H: RouteTaskHandler>(self, h: H) -> Self;
 
             fn set_distributed_worker_plan_rewrite_handler<H: WorkerPlanRewriteHandler>(&mut self, h: H);
             #[call(set_distributed_worker_plan_rewrite_handler)]

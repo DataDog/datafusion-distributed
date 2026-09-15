@@ -110,7 +110,7 @@ fn create_distributed_plan(
         // The plan already contains network boundaries set by the user. Just ensure they have nice
         // unique identifiers for each stage, and move forward with it.
         if original_plan.exists(|plan| Ok(plan.is_network_boundary()))? {
-            // Ensure the leafs are appropriately scaled up.
+            // Ensure the leaves are appropriately scaled up.
             let scaled = original_plan.transform_down_with_task_count(1, |plan, task_count| {
                 if !plan.children().is_empty() {
                     return Ok(Transformed::no(plan));
@@ -131,9 +131,7 @@ fn create_distributed_plan(
                 return Ok(plan);
             }
             let plan = push_fetch_into_network_coalesce(plan)?;
-            return Ok(Arc::new(
-                DistributedExec::new(plan).with_metrics_collection(d_cfg.collect_metrics),
-            ));
+            return Ok(create_distributed_exec(Arc::clone(&plan), d_cfg));
         }
 
         let mut plan = Arc::clone(&original_plan);
@@ -150,9 +148,7 @@ fn create_distributed_plan(
 
         if d_cfg.dynamic_task_count {
             // The task count will be decided dynamically at execution time.
-            return Ok(Arc::new(
-                DistributedExec::new(plan).with_metrics_collection(d_cfg.collect_metrics),
-            ));
+            return Ok(create_distributed_exec(Arc::clone(&plan), d_cfg));
         }
 
         // Compute per-node task counts and inject `Network*Exec` nodes at the stage boundaries.
@@ -167,10 +163,19 @@ fn create_distributed_plan(
         let plan = partial_reduce_below_network_shuffles(plan, cfg)?;
         let plan = push_fetch_into_network_coalesce(plan)?;
 
-        Ok(Arc::new(
-            DistributedExec::new(plan).with_metrics_collection(d_cfg.collect_metrics),
-        ))
+        Ok(create_distributed_exec(Arc::clone(&plan), d_cfg))
     })
+}
+
+fn create_distributed_exec(
+    plan: Arc<dyn ExecutionPlan>,
+    d_cfg: &DistributedConfig,
+) -> Arc<dyn ExecutionPlan> {
+    Arc::new(
+        DistributedExec::new(plan)
+            .with_metrics_collection(d_cfg.collect_metrics)
+            .with_dynamic_filter_collection(d_cfg.collect_dynamic_filters),
+    )
 }
 
 #[cfg(test)]
@@ -231,9 +236,10 @@ mod tests {
         SELECT count(*), "RainToday" FROM weather GROUP BY "RainToday" ORDER BY count(*)
         "#;
         let physical_plan_ascii = TestPlanBuilder::default()
+            .distributed_cardinality_effect_task_scale_factor(1.5)
             .physical_plan_as_ascii(query, false)
             .await;
-        assert_snapshot!(physical_plan_ascii, @"
+        assert_snapshot!(physical_plan_ascii, @r"
         ┌───── DistributedExec
         │ SortPreservingMergeExec: [count(*)@0 ASC NULLS LAST]
         │   [Stage 2] => NetworkCoalesceExec: output_partitions=8, input_tasks=2
@@ -359,9 +365,10 @@ mod tests {
         SELECT count(*), "RainToday" FROM weather GROUP BY "RainToday" ORDER BY count(*)
         "#;
         let physical_plan_ascii = TestPlanBuilder::default()
+            .distributed_cardinality_effect_task_scale_factor(1.5)
             .physical_plan_as_ascii(query, false)
             .await;
-        assert_snapshot!(physical_plan_ascii, @"
+        assert_snapshot!(physical_plan_ascii, @r"
         ┌───── DistributedExec
         │ SortPreservingMergeExec: [count(*)@0 ASC NULLS LAST]
         │   [Stage 2] => NetworkCoalesceExec: output_partitions=8, input_tasks=2
@@ -444,9 +451,10 @@ mod tests {
         ON a."RainTomorrow" = b."RainTomorrow"
         "#;
         let physical_plan_ascii = TestPlanBuilder::default()
+            .distributed_cardinality_effect_task_scale_factor(1.5)
             .physical_plan_as_ascii(query, false)
             .await;
-        assert_snapshot!(physical_plan_ascii, @"
+        assert_snapshot!(physical_plan_ascii, @r"
         ┌───── DistributedExec
         │ CoalescePartitionsExec
         │   [Stage 5] => NetworkCoalesceExec: output_partitions=8, input_tasks=2
@@ -520,6 +528,7 @@ mod tests {
         SELECT "RainToday", count(*) FROM weather GROUP BY "RainToday" LIMIT 10
         "#;
         let physical_plan_ascii = TestPlanBuilder::default()
+            .distributed_cardinality_effect_task_scale_factor(1.5)
             .physical_plan_as_ascii(query, false)
             .await;
         assert_snapshot!(physical_plan_ascii, @r"
@@ -550,6 +559,7 @@ mod tests {
         SELECT DISTINCT "RainToday", "WindGustDir" FROM weather
         "#;
         let physical_plan_ascii = TestPlanBuilder::default()
+            .distributed_cardinality_effect_task_scale_factor(1.5)
             .physical_plan_as_ascii(query, false)
             .await;
         assert_snapshot!(physical_plan_ascii, @r"

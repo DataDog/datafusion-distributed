@@ -2,16 +2,17 @@ use super::channel_resolver::BoxCloneSyncChannel;
 use super::errors::{map_flight_to_datafusion_error, map_status_to_datafusion_error};
 use super::generated::worker as pb;
 use super::metrics_proto::metrics_set_proto_to_df;
-use crate::common::serialize_uuid;
+use crate::common::{RetryOutcome, serialize_uuid};
+use crate::grpc::errors::tonic_status_to_datafusion_error;
 use crate::grpc::generated::worker::FlightAppMetadata;
 use crate::grpc::on_drop_stream::on_drop_stream;
 use crate::{
     BytesMetricExt, CoordinatorToWorkerMsg, DISTRIBUTED_DATAFUSION_TASK_ID_LABEL,
     DistributedConfig, ExecuteTaskRequest, FirstLatencyMetric, GetWorkerInfoRequest,
     GetWorkerInfoResponse, LatencyMetricExt, LoadInfo, MaxLatencyMetric, MaybeEncoded,
-    MinLatencyMetric, P50LatencyMetric, P95LatencyMetric, ProducerHead, SetPlanRequest, TaskKey,
-    TaskMetrics, WorkUnitBatch, WorkUnitFeedDeclaration, WorkUnitMsg, WorkerChannel,
-    WorkerToCoordinatorMsg,
+    MinLatencyMetric, P50LatencyMetric, P95LatencyMetric, ProducerHead, SetPlanRequest,
+    TaskCompletedDynamicFilters, TaskDynamicFilter, TaskKey, TaskMetrics, WorkUnitBatch,
+    WorkUnitFeedDeclaration, WorkUnitMsg, WorkerChannel, WorkerToCoordinatorMsg,
 };
 use arrow_flight::FlightData;
 use arrow_flight::decode::FlightRecordBatchStream;
@@ -41,7 +42,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tokio_util::sync::CancellationToken;
 use tonic::metadata::MetadataMap;
-use tonic::{Request, Status};
+use tonic::{Code, Request, Status};
 
 #[async_trait]
 impl WorkerChannel for pb::worker_service_client::WorkerServiceClient<BoxCloneSyncChannel> {
@@ -72,7 +73,41 @@ impl WorkerChannel for pb::worker_service_client::WorkerServiceClient<BoxCloneSy
             ))
             .boxed()
             .await
-            .map_err(map_status_to_datafusion_error)?
+            .map_err(|err| {
+                if let Some(err) = tonic_status_to_datafusion_error(&err) {
+                    return err;
+                }
+                let code = err.code();
+                let err = DataFusionError::External(Box::new(err));
+                match code {
+                    // https://grpc.io/docs/guides/status-codes/#deadline-exceeded
+                    // The worker may be slow or wedged, so retry a different URL.
+                    Code::DeadlineExceeded => RetryOutcome::OtherUrl.tag(err),
+                    // https://grpc.io/docs/guides/status-codes/#resource-exhausted
+                    // Admission pressure is local to this worker, so retry a different URL.
+                    Code::ResourceExhausted => RetryOutcome::OtherUrl.tag(err),
+                    // https://grpc.io/docs/guides/status-codes/#aborted
+                    // Routing retries this task setup at the higher level on the same URL.
+                    Code::Aborted => RetryOutcome::SameUrl.tag(err),
+                    // https://grpc.io/docs/guides/status-codes/#unavailable
+                    // If the worker died abruptly (e.g. OOM or SIGKILL), this is what the client
+                    // sees, so a different worker must be attempted.
+                    Code::Unavailable => RetryOutcome::OtherUrl.tag(err),
+                    Code::Ok => err,
+                    Code::Cancelled => err,
+                    Code::Unknown => err,
+                    Code::InvalidArgument => err,
+                    Code::NotFound => err,
+                    Code::AlreadyExists => err,
+                    Code::PermissionDenied => err,
+                    Code::FailedPrecondition => err,
+                    Code::OutOfRange => err,
+                    Code::Unimplemented => err,
+                    Code::Internal => err,
+                    Code::DataLoss => err,
+                    Code::Unauthenticated => err,
+                }
+            })?
             .into_inner()
             .map_err(map_status_to_datafusion_error)
             .map(|msg| decode_worker_to_coordinator_msg(msg?))
@@ -102,14 +137,14 @@ impl WorkerChannel for pb::worker_service_client::WorkerServiceClient<BoxCloneSy
             Arc::new(MemoryConsumer::new("WorkerConnection").register(ctx.memory_pool()));
         let memory_reservation_clone = Arc::clone(&memory_reservation);
 
-        // Track the maximum memory used to buffer recieved messages.
+        // Track the maximum memory used to buffer received messages.
         let mut curr_max_mem = 0;
         let max_mem_used = Gauge::new();
         MetricBuilder::new(&metrics).build(MetricValue::PeakMemoryUsage {
             name: "max_mem_used".into(),
             gauge: max_mem_used.clone(),
         });
-        // Track the total encoded size of all recieved messages.
+        // Track the total encoded size of all received messages.
         let bytes_transferred = MetricBuilder::new(&metrics).bytes_counter("bytes_transferred");
         let msg_count = MetricBuilder::new(&metrics).global_counter("msg_count");
         // Track end-to-end network latency distribution for messages that actually arrive.
@@ -512,8 +547,28 @@ fn decode_worker_to_coordinator_msg(
             pb::worker_to_coordinator_msg::Inner::LoadInfoEos(_) => {
                 WorkerToCoordinatorMsg::LoadInfoEos
             }
+            pb::worker_to_coordinator_msg::Inner::TaskCompletedDynamicFilters(filters) => {
+                WorkerToCoordinatorMsg::TaskCompletedDynamicFilters(
+                    decode_task_completed_dynamic_filters(filters)?,
+                )
+            }
         },
     )
+}
+
+fn decode_task_completed_dynamic_filters(
+    filters: pb::TaskCompletedDynamicFilters,
+) -> Result<TaskCompletedDynamicFilters> {
+    Ok(TaskCompletedDynamicFilters {
+        filters: filters
+            .filters
+            .into_iter()
+            .map(|filter| TaskDynamicFilter {
+                expression_id: filter.expression_id,
+                expression: MaybeEncoded::Encoded(filter.expression_proto),
+            })
+            .collect(),
+    })
 }
 
 fn decode_task_metrics(task_metrics: pb::TaskMetrics) -> Result<TaskMetrics> {

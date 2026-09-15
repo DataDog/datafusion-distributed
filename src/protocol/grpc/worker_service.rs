@@ -7,10 +7,11 @@ use crate::common::{deserialize_uuid, now_ns};
 use crate::protocol::grpc::{ObservabilityServiceImpl, ObservabilityServiceServer};
 use crate::{
     CoordinatorToWorkerMsg, DistributedConfig, ExecuteTaskRequest, LoadInfo, MaybeEncoded,
-    ProducerHead, SetPlanRequest, TaskKey, TaskMetrics, WorkUnitBatch, WorkUnitFeedDeclaration,
-    WorkUnitMsg, Worker, WorkerResolver, WorkerToCoordinatorMsg,
+    ProducerHead, SetPlanRequest, TaskCompletedDynamicFilters, TaskKey, TaskMetrics, WorkUnitBatch,
+    WorkUnitFeedDeclaration, WorkUnitMsg, Worker, WorkerResolver, WorkerToCoordinatorMsg,
 };
 
+use crate::worker::CoordinatorChannelResult;
 use arrow_flight::FlightData;
 use arrow_flight::encode::{DictionaryHandling, FlightDataEncoder, FlightDataEncoderBuilder};
 use arrow_flight::error::FlightError;
@@ -20,7 +21,7 @@ use datafusion::arrow::array::{Array, AsArray, RecordBatch, RecordBatchOptions};
 use datafusion::arrow::ipc::CompressionType;
 use datafusion::arrow::ipc::writer::IpcWriteOptions;
 use datafusion::common::DataFusionError;
-use datafusion::execution::SendableRecordBatchStream;
+use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use prost::Message;
@@ -115,12 +116,14 @@ impl pb::worker_service_server::WorkerService for Worker {
             })
             .boxed();
 
-        let output_stream = self
+        let CoordinatorChannelResult { task_ctx, stream } = self
             .coordinator_channel(metadata.into_headers(), set_plan_request, input_stream)
             .await
-            .map_err(datafusion_error_to_tonic_status)?
-            .map(|msg| match msg {
-                Ok(msg) => encode_worker_to_coordinator_msg(msg),
+            .map_err(datafusion_error_to_tonic_status)?;
+
+        let output_stream = stream
+            .map(move |msg| match msg {
+                Ok(msg) => encode_worker_to_coordinator_msg(msg, &task_ctx),
                 Err(err) => Err(datafusion_error_to_tonic_status(err)),
             })
             .boxed();
@@ -258,6 +261,7 @@ pub(super) fn decode_producer_head(proto: pb::execute_task_request::ProducerHead
 
 fn encode_worker_to_coordinator_msg(
     msg: WorkerToCoordinatorMsg,
+    task_ctx: &Arc<TaskContext>,
 ) -> Result<pb::WorkerToCoordinatorMsg, Status> {
     Ok(pb::WorkerToCoordinatorMsg {
         inner: Some(match msg {
@@ -272,7 +276,33 @@ fn encode_worker_to_coordinator_msg(
             WorkerToCoordinatorMsg::LoadInfoEos => {
                 pb::worker_to_coordinator_msg::Inner::LoadInfoEos(true)
             }
+            WorkerToCoordinatorMsg::TaskCompletedDynamicFilters(filters) => {
+                pb::worker_to_coordinator_msg::Inner::TaskCompletedDynamicFilters(
+                    encode_task_completed_dynamic_filters(filters, task_ctx)?,
+                )
+            }
         }),
+    })
+}
+
+fn encode_task_completed_dynamic_filters(
+    filters: TaskCompletedDynamicFilters,
+    task_ctx: &Arc<TaskContext>,
+) -> Result<pb::TaskCompletedDynamicFilters, Status> {
+    Ok(pb::TaskCompletedDynamicFilters {
+        filters: filters
+            .filters
+            .into_iter()
+            .map(|filter| {
+                Ok(pb::DynamicFilter {
+                    expression_id: filter.expression_id,
+                    expression_proto: filter
+                        .expression
+                        .encode(task_ctx)
+                        .map_err(datafusion_error_to_tonic_status)?,
+                })
+            })
+            .collect::<Result<_, Status>>()?,
     })
 }
 
