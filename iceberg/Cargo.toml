@@ -17,8 +17,9 @@ bytes = "1"
 datafusion = { workspace = true, features = ["sql"] }
 datafusion-proto = { workspace = true }
 futures = "0.3"
-iceberg = { git = "https://github.com/apache/iceberg-rust.git", rev = "4d83bc77dc10cff851a3ef427c451ff977bc3643" }
-iceberg-storage-opendal = { git = "https://github.com/apache/iceberg-rust.git", rev = "4d83bc77dc10cff851a3ef427c451ff977bc3643", default-features = false, features = ["opendal-fs", "opendal-s3", "opendal-gcs"] }
+# Keep these pins aligned with dd-source so shared Iceberg types have the same Cargo source.
+iceberg = { git = "https://github.com/DataDog/iceberg-rust", rev = "2b0371eca754283edb30155b0b6a7da513d5adb9" }
+iceberg-storage-opendal = { git = "https://github.com/DataDog/iceberg-rust", rev = "2b0371eca754283edb30155b0b6a7da513d5adb9", default-features = false, features = ["opendal-fs", "opendal-s3", "opendal-gcs"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 typetag = "0.2"
