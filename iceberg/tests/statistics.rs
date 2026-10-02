@@ -25,15 +25,15 @@ mod tests {
     const TAXI_COLUMNS: usize = 13;
 
     #[tokio::test]
-    async fn missing_snapshot_summary_statistics_are_absent() -> Result<()> {
+    async fn missing_snapshot_summary_statistics_come_from_planned_files() -> Result<()> {
         let harness = IcebergTestHarness::builder()
             .with_table_metadata(metadata_without_summary_statistics())
             .build()
             .await?;
         let stats = query_statistics(&harness, "SELECT * FROM taxi").await?;
 
-        assert_eq!(stats.num_rows, Precision::Absent);
-        assert_eq!(stats.total_byte_size, Precision::Absent);
+        assert_eq!(stats.num_rows, Precision::Exact(TAXI_ROWS));
+        assert_eq!(stats.total_byte_size, Precision::Exact(TAXI_BYTES));
         Ok(())
     }
 
@@ -66,8 +66,89 @@ mod tests {
             .await?;
         let stats = query_statistics(&harness, "SELECT * FROM taxi").await?;
 
-        assert_eq!(stats.num_rows, Precision::Exact(42));
-        assert_eq!(stats.total_byte_size, Precision::Exact(4_242));
+        // Manifest entries, not synthetic snapshot-summary totals, now determine scan cost.
+        assert_eq!(stats.num_rows, Precision::Exact(TAXI_ROWS));
+        assert_eq!(stats.total_byte_size, Precision::Exact(TAXI_BYTES));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn deletes_prevent_exact_count_optimization() -> Result<(), Box<dyn Error>> {
+        let metadata = taxi_metadata();
+        let snapshot = metadata.current_snapshot().expect("taxi has a snapshot");
+        let storage = MemoryStorage::new();
+        let data_uri = format!("{FIXTURE_URI}/metadata/deletes-test-data.avro");
+        let delete_uri = format!("{FIXTURE_URI}/metadata/deletes-test-deletes.avro");
+        let mut data_writer = ManifestWriterBuilder::new(
+            storage.new_output(&data_uri)?,
+            Some(snapshot.snapshot_id()),
+            metadata.current_schema().clone(),
+            metadata.default_partition_spec().as_ref().clone(),
+        )
+        .build_v2_data();
+        let mut delete_writer = ManifestWriterBuilder::new(
+            storage.new_output(&delete_uri)?,
+            Some(snapshot.snapshot_id()),
+            metadata.current_schema().clone(),
+            metadata.default_partition_spec().as_ref().clone(),
+        )
+        .build_v2_deletes();
+        let partition = Struct::from_iter([Some(Literal::date_from_str("2024-01-10")?)]);
+        data_writer.add_file(
+            DataFileBuilder::default()
+                .content(DataContentType::Data)
+                .file_format(DataFileFormat::Parquet)
+                .file_path(format!("{FIXTURE_URI}/data/unopened.parquet"))
+                .partition(partition.clone())
+                .record_count(100)
+                .file_size_in_bytes(1000)
+                .build()?,
+            snapshot.sequence_number() - 1,
+        )?;
+        delete_writer.add_file(
+            DataFileBuilder::default()
+                .content(DataContentType::PositionDeletes)
+                .file_format(DataFileFormat::Parquet)
+                .file_path(format!("{FIXTURE_URI}/data/unopened-deletes.parquet"))
+                .partition(partition)
+                .record_count(1)
+                .file_size_in_bytes(100)
+                .build()?,
+            snapshot.sequence_number(),
+        )?;
+        let manifests = [
+            data_writer.write_manifest_file().await?,
+            delete_writer.write_manifest_file().await?,
+        ];
+        let mut list = ManifestListWriter::v2(
+            storage
+                .new_output(snapshot.manifest_list())?
+                .writer()
+                .await?,
+            snapshot.snapshot_id(),
+            snapshot.parent_snapshot_id(),
+            snapshot.sequence_number(),
+        );
+        list.add_manifests(manifests.into_iter())?;
+        list.close().await?;
+        let harness = IcebergTestHarness::builder()
+            .with_file(&data_uri, storage.read(&data_uri).await?.to_vec())
+            .with_file(&delete_uri, storage.read(&delete_uri).await?.to_vec())
+            .with_file(
+                snapshot.manifest_list(),
+                storage.read(snapshot.manifest_list()).await?.to_vec(),
+            )
+            .build()
+            .await?;
+        let stats = query_statistics(&harness, "SELECT * FROM taxi").await?;
+        assert_eq!(stats.num_rows, Precision::Inexact(100));
+        let plan = harness.physical_plan("SELECT count(*) FROM taxi").await?;
+        assert!(
+            displayable(plan.as_ref())
+                .indent(true)
+                .to_string()
+                .contains("DataSourceExec")
+        );
         Ok(())
     }
 
@@ -109,7 +190,7 @@ mod tests {
             .to_string();
         insta::assert_snapshot!(display, @"
         CooperativeExec, statistics=[Rows=Exact(175000), Bytes=Exact(4480382), [(Col[0]:)]]
-          DataSourceExec: format=iceberg, projection=[vendor_id], statistics=[Rows=Exact(175000), Bytes=Exact(4480382), [(Col[0]:)]]
+          DataSourceExec: format=iceberg, projection=[vendor_id], planned_files=7, planned_bytes=4480382, statistics=[Rows=Exact(175000), Bytes=Exact(4480382), [(Col[0]:)]]
         ");
         Ok(())
     }
