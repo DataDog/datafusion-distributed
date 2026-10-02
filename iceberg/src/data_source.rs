@@ -44,9 +44,10 @@ const TOTAL_FILE_SIZE: &str = "total-files-size";
 /// Consumes a stream of [iceberg::scan::FileScanTask]s per partition and reads the underlying
 /// files into an Arrow stream.
 ///
-/// [iceberg::scan::FileScanTask] are discovered progressively during execution by the
-/// [IcebergWorkUnitFeed], and this [DataSource] executes those tasks as they come, also in
-/// a streaming fashion. This works seamlessly in both single-node and distributed execution:
+/// The table provider normally discovers pruned [iceberg::scan::FileScanTask]s during
+/// physical planning. [IcebergWorkUnitFeed] reuses that immutable work at execution;
+/// disabling `iceberg.plan_files` retains progressive discovery during execution.
+/// Record batches are streamed in both single-node and distributed execution:
 ///
 /// ## Single Node
 ///
@@ -191,11 +192,31 @@ impl IcebergDataSource {
                 projection,
                 predicates,
                 partitioning,
+                planned: None,
                 sync_manager: Default::default(),
             }),
             table_snapshot,
             column_stats: None,
         }
+    }
+
+    pub(crate) async fn with_planned_files(mut self, context: Arc<TaskContext>) -> Result<Self> {
+        let config = IcebergConfig::from_task_context(&context);
+        if config.plan_files
+            && let Some(feed) = self.feed.inner_mut()
+        {
+            feed.plan_files(&self.iceberg_runtime, context, config.planning_max_files)
+                .await?;
+        }
+        Ok(self)
+    }
+
+    pub(crate) fn planned_file_count(&self) -> Option<usize> {
+        self.feed
+            .inner()?
+            .planned
+            .as_ref()
+            .map(|planned| planned.tasks.len())
     }
 
     /// Creating an instance with per column statistics calculation, including:
@@ -288,6 +309,14 @@ impl DataSource for IcebergDataSource {
         if let Some(predicate) = &feed.predicates {
             write!(f, ", predicate={predicate}")?;
         }
+        if let Some(planned) = &feed.planned {
+            write!(
+                f,
+                ", planned_files={}, planned_bytes={}",
+                planned.tasks.len(),
+                planned.bytes
+            )?;
+        }
         if let Some(fetch) = self.fetch {
             write!(f, ", fetch={fetch}")?;
         }
@@ -306,9 +335,29 @@ impl DataSource for IcebergDataSource {
         if self.feed.inner().is_none() {
             return Ok(Arc::new(Statistics::new_unknown(&self.schema)));
         }
-        let mut stats = stats_from_snapshot(self.table_snapshot.clone(), &self.schema)?;
+        let planned = self.feed.inner().and_then(|feed| feed.planned.as_ref());
+        let mut stats = if let Some(planned) = planned {
+            let mut stats = Statistics::new_unknown(&self.schema);
+            stats.num_rows = match planned.rows {
+                Some(0) if planned.tasks.is_empty() => Precision::Exact(0),
+                Some(rows) if !planned.filtered => Precision::Exact(rows),
+                Some(rows) => Precision::Inexact(rows),
+                None => Precision::Absent,
+            };
+            // File bytes describe scan IO, not the exact size of the filtered output.
+            stats.total_byte_size = if planned.filtered {
+                Precision::Inexact(planned.bytes)
+            } else {
+                Precision::Exact(planned.bytes)
+            };
+            stats
+        } else {
+            stats_from_snapshot(self.table_snapshot.clone(), &self.schema)?
+        };
 
-        if let Some(col_stats) = &self.column_stats {
+        if !planned.is_some_and(|planned| planned.filtered)
+            && let Some(col_stats) = &self.column_stats
+        {
             stats.column_statistics = col_stats.clone();
         }
 

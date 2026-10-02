@@ -14,6 +14,10 @@ extensions_options! {
         pub row_group_filtering_enabled: bool, default = true
         /// Whether to apply row-level selections while reading Parquet files.
         pub row_selection_enabled: bool, default = false
+        /// Discover pruned file tasks during physical planning and reuse them at execution.
+        pub plan_files: bool, default = true
+        /// Maximum retained file tasks per scan; exceeding this limit fails planning.
+        pub planning_max_files: usize, default = 100_000
         /// Whether to include column statistics read during planning
         pub column_stats_enabled: bool, default = false
     }

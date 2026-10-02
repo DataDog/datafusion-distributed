@@ -99,6 +99,7 @@ impl TableProvider for IcebergStaticTableProvider {
                 .with_column_statistics(self.table.clone(), projection)
                 .await?;
         }
+        let data_source = data_source.with_planned_files(state.task_ctx()).await?;
         Ok(DataSourceExec::from_data_source(data_source))
     }
 

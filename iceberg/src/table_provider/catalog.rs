@@ -90,6 +90,7 @@ impl TableProvider for IcebergCatalogTableProvider {
                 .await?;
         }
 
+        let data_source = data_source.with_planned_files(state.task_ctx()).await?;
         Ok(DataSourceExec::from_data_source(data_source))
     }
 
