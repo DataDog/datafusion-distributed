@@ -16,6 +16,10 @@ extensions_options! {
         pub row_selection_enabled: bool, default = false
         /// Discover pruned file tasks during physical planning and reuse them at execution.
         pub plan_files: bool, default = true
+        /// Assign whole files largest-first to the least-loaded task. Requires plan_files.
+        pub greedy_file_assignment: bool, default = false
+        /// Expose assigned immutable data-file paths/bytes as DFD routing hints. Requires plan_files.
+        pub file_task_affinity: bool, default = false
         /// Maximum retained file tasks per scan; exceeding this limit fails planning.
         pub planning_max_files: usize, default = 100_000
         /// Whether to include column statistics read during planning

@@ -1,5 +1,5 @@
 use crate::events::common::EventHandlerChain;
-use crate::{TaskKey, WorkerResolver, WorkerToCoordinatorMsg};
+use crate::{TaskKey, WorkUnitAffinity, WorkerResolver, WorkerToCoordinatorMsg};
 use async_trait::async_trait;
 use datafusion::common::Result;
 use datafusion::execution::TaskContext;
@@ -31,6 +31,26 @@ pub struct RouteTaskEvent<'a> {
     /// `dialer.dial()` can be called multiple times over different URLs until one successfully
     /// connects.
     pub dialer: &'a dyn CoordinatorToWorkerDialer,
+}
+
+/// Coordinator-only hints captured before native feeds become remote feeds.
+#[derive(Debug)]
+pub(crate) struct TaskWorkUnitAffinity(pub Arc<[WorkUnitAffinity]>);
+
+impl RouteTaskEvent<'_> {
+    /// Returns locality hints for this task's actual scan work, not the entire stage.
+    ///
+    /// Providers opt in through [`crate::WorkUnitFeedProvider::task_affinity`]. Hints are
+    /// collected before plan serialization, with scan-local task indexes and counts.
+    /// No cache implementation or file format is exposed to DFD. Unknown work yields
+    /// an empty list. Reading hints neither consumes work nor changes the assignment.
+    pub fn work_unit_affinity(&self) -> Arc<[WorkUnitAffinity]> {
+        self.task_ctx
+            .session_config()
+            .get_extension::<TaskWorkUnitAffinity>()
+            .map(|hints| Arc::clone(&hints.0))
+            .unwrap_or_default()
+    }
 }
 
 /// A worker connection selected by a [`RouteTaskHandler`].

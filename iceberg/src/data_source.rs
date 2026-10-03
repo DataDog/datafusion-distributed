@@ -4,7 +4,7 @@ use std::sync::Arc;
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::common::stats::Precision;
 use datafusion::common::tree_node::TreeNodeRecursion;
-use datafusion::common::{ColumnStatistics, Statistics};
+use datafusion::common::{ColumnStatistics, Statistics, config_err};
 use datafusion::config::ConfigOptions;
 use datafusion::datasource::source::DataSource;
 use datafusion::error::{DataFusionError, Result};
@@ -202,6 +202,11 @@ impl IcebergDataSource {
 
     pub(crate) async fn with_planned_files(mut self, context: Arc<TaskContext>) -> Result<Self> {
         let config = IcebergConfig::from_task_context(&context);
+        if !config.plan_files && (config.greedy_file_assignment || config.file_task_affinity) {
+            return config_err!(
+                "Iceberg greedy_file_assignment and file_task_affinity require iceberg.plan_files=true"
+            );
+        }
         if config.plan_files
             && let Some(feed) = self.feed.inner_mut()
         {

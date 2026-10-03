@@ -7,7 +7,9 @@ use datafusion::common::{Result, exec_datafusion_err, exec_err, internal_err};
 use datafusion::error::DataFusionError;
 use datafusion::execution::TaskContext;
 use datafusion::physical_expr::Partitioning;
-use datafusion_distributed::{DistributedWorkUnitFeedContext, WorkUnitFeedProvider};
+use datafusion_distributed::{
+    DistributedTaskContext, DistributedWorkUnitFeedContext, WorkUnitAffinity, WorkUnitFeedProvider,
+};
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use iceberg::expr::Predicate;
@@ -18,6 +20,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use tokio::sync::oneshot;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
+use crate::IcebergConfig;
 use crate::common::df_err;
 use crate::planned_files::PlannedFiles;
 
@@ -253,6 +256,32 @@ pub(crate) struct SyncManager {
 impl WorkUnitFeedProvider for IcebergWorkUnitFeed {
     type WorkUnit = FileScanTaskWorkUnit;
 
+    fn task_affinity(
+        &self,
+        task: DistributedTaskContext,
+        ctx: Arc<TaskContext>,
+    ) -> Result<Vec<WorkUnitAffinity>> {
+        let config = IcebergConfig::from_task_context(&ctx);
+        if !config.file_task_affinity {
+            return Ok(Vec::new());
+        }
+        let Some(planned) = &self.planned else {
+            return Ok(Vec::new());
+        };
+        let assignment =
+            planned.assignment(task.task_count, config.greedy_file_assignment, &ctx)?;
+        let Some(indexes) = assignment.task_files.get(task.task_index) else {
+            return internal_err!("Invalid Iceberg affinity task index {}", task.task_index);
+        };
+        Ok(indexes
+            .iter()
+            .map(|&index| {
+                let file = &planned.tasks[index];
+                WorkUnitAffinity::new(file.data_file_path(), file.length())
+            })
+            .collect())
+    }
+
     fn feed(
         &self,
         partition: usize,
@@ -267,6 +296,22 @@ impl WorkUnitFeedProvider for IcebergWorkUnitFeed {
                 .ok_or_else(|| exec_datafusion_err!("Invalid Iceberg feed partition count"))?;
             if partition >= total {
                 return internal_err!("Invalid feed index {partition}");
+            }
+            let config = IcebergConfig::from_task_context(&ctx);
+            if config.greedy_file_assignment {
+                let assignment = planned.assignment(wuf_ctx.fan_out_tasks, true, &ctx)?;
+                let task = partition / partitions;
+                let indexes =
+                    (partition % partitions..assignment.task_files[task].len()).step_by(partitions);
+                let planned = Arc::clone(planned);
+                return Ok(futures::stream::iter(indexes)
+                    .map(move |offset| {
+                        let index = assignment.task_files[task][offset];
+                        Ok(FileScanTaskWorkUnit {
+                            payload: FileScanTaskPayload::Native(Arc::clone(&planned.tasks[index])),
+                        })
+                    })
+                    .boxed());
             }
             // Inverse of worker-first routing: each feed visits every T * P-th file.
             let first = partition / partitions + (partition % partitions) * wuf_ctx.fan_out_tasks;
@@ -354,5 +399,71 @@ impl WorkUnitFeedProvider for IcebergWorkUnitFeed {
                 let _ = &task_ref; // Keep the task alive as long as one feed is alive.
             })
             .boxed())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{IcebergDataSource, test_utils::IcebergTestHarness};
+    use datafusion::datasource::source::DataSourceExec;
+    use datafusion::physical_plan::ExecutionPlanProperties;
+    use datafusion::prelude::{SessionConfig, SessionContext};
+    use futures::TryStreamExt;
+
+    #[tokio::test]
+    async fn routing_hints_match_the_files_delivered_by_every_partition() -> Result<()> {
+        let scan = IcebergTestHarness::new().await?.scan().await?;
+        let source = scan.downcast_ref::<DataSourceExec>().unwrap();
+        let iceberg = source
+            .data_source()
+            .downcast_ref::<IcebergDataSource>()
+            .unwrap();
+        let provider = iceberg.feed().inner().unwrap();
+        let partitions = scan.output_partitioning().partition_count();
+        for greedy in [false, true] {
+            let mut config = SessionConfig::new();
+            config.options_mut().extensions.insert(IcebergConfig {
+                greedy_file_assignment: greedy,
+                file_task_affinity: true,
+                ..Default::default()
+            });
+            config.set_extension(Arc::new(DistributedWorkUnitFeedContext {
+                fan_out_tasks: 3,
+            }));
+            let ctx = SessionContext::new_with_config(config).task_ctx();
+            let mut all_files = Vec::new();
+            for task_index in 0..3 {
+                let task = DistributedTaskContext {
+                    task_index,
+                    task_count: 3,
+                };
+                let mut hinted: Vec<_> = provider
+                    .task_affinity(task, Arc::clone(&ctx))?
+                    .into_iter()
+                    .map(|h| (h.key, h.weight))
+                    .collect();
+                let mut delivered = Vec::new();
+                for partition in task_index * partitions..(task_index + 1) * partitions {
+                    let units: Vec<_> = provider
+                        .feed(partition, Arc::clone(&ctx))?
+                        .try_collect()
+                        .await?;
+                    for unit in units {
+                        let file = unit.into_task()?;
+                        delivered.push((file.data_file_path().to_owned(), file.length()));
+                    }
+                }
+                hinted.sort();
+                delivered.sort();
+                assert_eq!(hinted, delivered);
+                all_files.extend(delivered);
+            }
+            assert_eq!(all_files.len(), 7);
+            all_files.sort();
+            all_files.dedup();
+            assert_eq!(all_files.len(), 7);
+        }
+        Ok(())
     }
 }
