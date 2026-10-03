@@ -52,7 +52,9 @@ impl AffinityRouteTaskHandler {
     /// Ranks unique worker URLs by weighted affinity. Useful for custom routing
     /// handlers that want the same data homes but different admission policies.
     /// Zero-weight hints are ignored. Duplicate keys use their maximum weight:
-    /// repeated scans reuse bytes but do not share decoded/execution state.
+    /// repeated scans reuse bytes but do not share decoded/execution state. Equal
+    /// scores are broken by a hash of the distinct key set and worker URL, avoiding
+    /// systematic preference for low URLs while preserving order independence.
     pub fn rank_workers(hints: &[WorkUnitAffinity], workers: &[Url]) -> Vec<Url> {
         let mut workers = workers.to_vec();
         workers.sort_unstable_by(|a, b| a.as_str().cmp(b.as_str()));
@@ -71,7 +73,11 @@ impl AffinityRouteTaskHandler {
             return Vec::new();
         }
         let mut scores = vec![0_u128; workers.len()];
+        // BTreeMap gives a canonical, deduplicated key order. Neither resolver order
+        // nor the number/order of references to an object should affect score ties.
+        let mut key_set = DefaultHasher::new();
         for (key, weight) in weights {
+            key.hash(&mut key_set);
             let owner = workers
                 .iter()
                 .enumerate()
@@ -84,11 +90,23 @@ impl AffinityRouteTaskHandler {
                 .0;
             scores[owner] += u128::from(weight);
         }
-        let mut ranked: Vec<_> = workers.into_iter().zip(scores).collect();
-        ranked.sort_by(|(a, a_score), (b, b_score)| {
-            b_score.cmp(a_score).then(a.as_str().cmp(b.as_str()))
+        let key_set = key_set.finish();
+        let mut ranked: Vec<_> = workers
+            .into_iter()
+            .zip(scores)
+            .map(|(url, score)| {
+                let mut tie = DefaultHasher::new();
+                ("affinity-score-tie", key_set, url.as_str()).hash(&mut tie);
+                (url, score, tie.finish())
+            })
+            .collect();
+        ranked.sort_by(|(a, a_score, a_tie), (b, b_score, b_tie)| {
+            b_score
+                .cmp(a_score)
+                .then(b_tie.cmp(a_tie))
+                .then(a.as_str().cmp(b.as_str())) // Only for a hash collision.
         });
-        ranked.into_iter().map(|(url, _)| url).collect()
+        ranked.into_iter().map(|(url, _, _)| url).collect()
     }
 }
 
@@ -124,6 +142,37 @@ mod tests {
             AffinityRouteTaskHandler::rank_workers(&hints[..1], &workers)[0]
         );
         assert!(AffinityRouteTaskHandler::rank_workers(&[], &workers).is_empty());
+    }
+
+    #[test]
+    fn equal_weight_multi_file_tasks_do_not_prefer_low_worker_urls() {
+        let workers: Vec<_> = (0..10)
+            .map(|i| Url::parse(&format!("http://worker-{i}")).unwrap())
+            .collect();
+        let reversed_workers: Vec<_> = workers.iter().rev().cloned().collect();
+        let mut counts = vec![0; workers.len()];
+        for task in 0..20_000 {
+            let hints = [
+                WorkUnitAffinity::new(format!("s3://bucket/a-{task}"), 1),
+                WorkUnitAffinity::new(format!("s3://bucket/b-{task}"), 1),
+            ];
+            let ranked = AffinityRouteTaskHandler::rank_workers(&hints, &workers);
+            let owner = workers.iter().position(|url| *url == ranked[0]).unwrap();
+            counts[owner] += 1;
+            if task < 100 {
+                // Key order, repeated references and resolver order must not affect ties.
+                let repeated = [hints[1].clone(), hints[0].clone(), hints[0].clone()];
+                assert_eq!(
+                    ranked,
+                    AffinityRouteTaskHandler::rank_workers(&repeated, &reversed_workers)
+                );
+            }
+        }
+        // Fixed inputs; a broad +/-20% bound detects URL-order bias, not performance.
+        assert!(
+            counts.iter().all(|&count| (1600..=2400).contains(&count)),
+            "{counts:?}"
+        );
     }
 
     #[test]
