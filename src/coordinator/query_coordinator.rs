@@ -9,7 +9,8 @@ use crate::dynamic_filtering::{
     maybe_roundtrip_plan_to_sever_in_memory_dynamic_filter_relationships,
 };
 use crate::events::{
-    RouteTaskEvent, RouteTaskEventResponse, RouteTaskHandlers, new_coordinator_to_worker_dialer,
+    RouteTaskEvent, RouteTaskEventResponse, RouteTaskHandlers, TaskWorkUnitAffinity,
+    new_coordinator_to_worker_dialer,
 };
 use crate::execution_plans::{ChildrenIsolatorUnionExec, DistributedLeafExec};
 use crate::passthrough_headers::get_passthrough_headers;
@@ -20,7 +21,8 @@ use crate::{
     CoordinatorToWorkerMsg, DISTRIBUTED_DATAFUSION_TASK_ID_LABEL, DistributedGetterExt,
     DistributedTaskContext, DistributedWorkUnitFeedContext, LoadInfo, LocalWorkerContext,
     MaybeEncoded, SetPlanRequest, TaskCompletedDynamicFilters, TaskKey, TaskMetrics,
-    WorkUnitFeedDeclaration, WorkerToCoordinatorMsg, get_distributed_channel_resolver,
+    WorkUnitAffinity, WorkUnitFeedDeclaration, WorkerToCoordinatorMsg,
+    get_distributed_channel_resolver,
 };
 use datafusion::common::Result;
 use datafusion::common::instant::Instant;
@@ -168,6 +170,7 @@ impl<'a> StageCoordinator<'a> {
             plan,
             work_unit_feed_declarations,
             dynamic_filter_remote_producer_ids,
+            work_unit_affinity,
         } = self.task_specialized_plan(task_i)?;
 
         let task_key = TaskKey {
@@ -258,8 +261,13 @@ impl<'a> StageCoordinator<'a> {
 
         let worker_resolver = session_config.get_distributed_worker_resolver()?;
 
+        // Hints are coordinator-only; do not propagate them to worker sessions or other tasks.
+        let routing_ctx = Arc::new(task_ctx_with_extension(
+            self.task_ctx,
+            TaskWorkUnitAffinity(work_unit_affinity.into()),
+        ));
         let ev = RouteTaskEvent {
-            task_ctx: self.task_ctx,
+            task_ctx: &routing_ctx,
             metrics: self.metrics_set,
             worker_resolver: worker_resolver.as_ref(),
             task_specialized_plan: &plan,
@@ -436,6 +444,7 @@ impl<'a> StageCoordinator<'a> {
         let dynamic_filtering_enabled = is_dynamic_filtering_enabled(session_config);
 
         let mut work_unit_feed_declarations = vec![];
+        let mut work_unit_affinity = vec![];
         let d_ctx = DistributedTaskContext {
             task_index: task_i,
             task_count: self.task_count,
@@ -444,6 +453,7 @@ impl<'a> StageCoordinator<'a> {
         let plan = Arc::clone(self.plan);
         let transformed = plan.transform_down_with_dt_ctx(d_ctx, |plan, d_ctx| {
             if let Some(wuf) = wuf_registry.get_work_unit_feed(&plan) {
+                work_unit_affinity.extend(wuf.task_affinity(d_ctx, Arc::clone(self.task_ctx))?);
                 work_unit_feed_declarations.push(WorkUnitFeedDeclaration {
                     id: wuf.id(),
                     partitions: plan.properties().partitioning.partition_count(),
@@ -500,6 +510,7 @@ impl<'a> StageCoordinator<'a> {
             plan,
             work_unit_feed_declarations,
             dynamic_filter_remote_producer_ids,
+            work_unit_affinity,
         })
     }
 }
@@ -509,6 +520,7 @@ fn keep_stream_alive<T: 'static>(notify: Arc<Notify>) -> impl Stream<Item = T> +
 }
 
 struct TaskSpecializedPlan {
+    work_unit_affinity: Vec<WorkUnitAffinity>,
     plan: Arc<dyn ExecutionPlan>,
     work_unit_feed_declarations: Vec<WorkUnitFeedDeclaration>,
     dynamic_filter_remote_producer_ids: Vec<u64>,

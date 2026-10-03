@@ -1,8 +1,8 @@
 # Work Unit Feeds
 
 A **work unit feed** lets a leaf `ExecutionPlan` be driven by work that is discovered on the
-coordinator *at runtime* and streamed to the workers while the query executes, rather than being
-fully known at planning time.
+coordinator *at runtime* and streamed to the workers while the query executes, rather than embedding the descriptors in every worker plan. Providers can also retain work
+known at planning time, as the Iceberg integration does.
 
 ## When to use a work unit feed
 
@@ -163,6 +163,25 @@ pub trait WorkUnitFeedProvider: Send + Sync + Debug {
     fn metrics(&self) -> ExecutionPlanMetricsSet { ExecutionPlanMetricsSet::new() }
 }
 ```
+
+### Assignment and locality hints
+
+A provider decides which work enters each partition. For work known up front,
+`greedy_work_unit_assignment(costs, task_count)` is an optional largest-first,
+least-loaded helper returning per-task input indexes. It neither chooses workers
+nor changes a plan's distribution constraints. Retain one assignment and use it
+consistently for all feeds; do not independently recompute placement per partition.
+
+Providers may also implement `task_affinity(task, ctx)` to return
+`Vec<WorkUnitAffinity>` before worker selection. Each hint contains an opaque
+immutable-object key and a reusable-byte weight. The task index/count are relative
+to the scan, including isolated UNION children. Return an empty list when work is
+not yet known, and do not consume the feed to discover hints.
+
+DFD captures hints before serialization turns native feeds into remote handles.
+They are exposed through `RouteTaskEvent::work_unit_affinity()` and do not travel
+over the worker protocol. See [worker routing](06-worker-routing.md) for the opt-in
+affinity policy. Providing hints does not itself enable affinity routing.
 
 The associated `WorkUnit` type is the descriptor that travels over the network. Any
 [`prost`](https://docs.rs/prost) message automatically satisfies the `WorkUnit` trait — you don't need
