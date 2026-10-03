@@ -56,6 +56,19 @@ impl PlannedFiles {
             .saturating_add(task_count.saturating_mul(size_of::<Vec<usize>>()));
         reservation.try_grow(bytes.saturating_mul(2))?;
         let task_files = if greedy {
+            // In addition to retained output, construction holds our order/cost arrays
+            // and greedy_work_unit_assignment's order array and load heap. Allow an
+            // extra index array for output-vector reallocations. Keep this estimate
+            // aligned with that allocator. Declare the reservation before the arrays
+            // so it is released after them, on both success and failure.
+            let scratch = MemoryConsumer::new("Iceberg file assignment scratch")
+                .register(context.memory_pool());
+            let scratch_bytes = self
+                .tasks
+                .len()
+                .saturating_mul(3 * size_of::<usize>() + size_of::<u64>())
+                .saturating_add(task_count.saturating_mul(size_of::<(u128, usize, usize)>()));
+            scratch.try_grow(scratch_bytes)?;
             // Manifest discovery order is not stable. Use object identity/range for ties.
             let mut order: Vec<_> = (0..self.tasks.len()).collect();
             order.sort_unstable_by_key(|&i| {

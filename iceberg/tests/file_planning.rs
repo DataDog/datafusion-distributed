@@ -4,15 +4,19 @@ mod tests {
 
     use datafusion::arrow::util::pretty::pretty_format_batches;
     use datafusion::common::{Result, stats::Precision};
+    use datafusion::datasource::source::DataSourceExec;
     use datafusion::execution::TaskContext;
-    use datafusion::execution::memory_pool::GreedyMemoryPool;
+    use datafusion::execution::memory_pool::{GreedyMemoryPool, MemoryConsumer, MemoryPool};
     use datafusion::execution::runtime_env::RuntimeEnvBuilder;
     use datafusion::physical_plan::{
         collect,
         statistics::{StatisticsArgs, StatisticsContext},
     };
-    use datafusion_distributed::DistributedExt;
-    use datafusion_distributed_iceberg::{IcebergConfig, test_utils::IcebergTestHarness};
+    use datafusion::prelude::SessionConfig;
+    use datafusion_distributed::{DistributedExt, DistributedTaskContext, WorkUnitFeedProvider};
+    use datafusion_distributed_iceberg::{
+        IcebergConfig, IcebergDataSource, test_utils::IcebergTestHarness,
+    };
 
     #[cfg(feature = "integration")]
     #[tokio::test]
@@ -115,6 +119,88 @@ mod tests {
             error.to_string().contains("Iceberg file planning"),
             "{error}"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn greedy_assignment_reserves_and_releases_scratch_after_file_discovery() -> Result<()> {
+        const CAPACITY: usize = 1024 * 1024;
+        // Seven files / one task fit the retained-only reservation, but not construction.
+        const HEADROOM: usize = 192;
+        let pool: Arc<dyn MemoryPool> = Arc::new(GreedyMemoryPool::new(CAPACITY));
+        let runtime = Arc::new(
+            RuntimeEnvBuilder::new()
+                .with_memory_pool(Arc::clone(&pool))
+                .build()?,
+        );
+        let mut iceberg = IcebergConfig::default();
+        iceberg.greedy_file_assignment = true;
+        iceberg.file_task_affinity = true;
+        let mut config = SessionConfig::new();
+        config.options_mut().extensions.insert(iceberg);
+        let harness = IcebergTestHarness::builder()
+            .configure_session(|state| {
+                Ok(state
+                    .with_config(config.clone())
+                    .with_runtime_env(Arc::clone(&runtime)))
+            })?
+            .build()
+            .await?;
+        let plan = harness.scan().await?; // File discovery succeeds before restricting headroom.
+        let discovered = pool.reserved();
+        assert!(discovered > 0);
+        let source = plan.downcast_ref::<DataSourceExec>().unwrap();
+        let provider = source
+            .data_source()
+            .downcast_ref::<IcebergDataSource>()
+            .unwrap()
+            .feed()
+            .inner()
+            .unwrap();
+        let ctx = Arc::new(
+            TaskContext::default()
+                .with_session_config(config)
+                .with_runtime(runtime),
+        );
+        let task = DistributedTaskContext {
+            task_index: 0,
+            task_count: 1,
+        };
+        let occupied = MemoryConsumer::new("test headroom").register(&pool);
+        occupied.try_grow(CAPACITY - discovered - HEADROOM)?;
+        let before = pool.reserved();
+        let error = provider
+            .task_affinity(task, Arc::clone(&ctx))
+            .expect_err("scratch must also fit");
+        assert!(
+            error
+                .to_string()
+                .contains("Iceberg file assignment scratch"),
+            "{error}"
+        );
+        assert_eq!(
+            pool.reserved(),
+            before,
+            "failure must release partial reservations"
+        );
+
+        drop(occupied);
+        let hints = provider.task_affinity(task, Arc::clone(&ctx))?;
+        assert_eq!(hints.len(), 7);
+        let retained = pool.reserved();
+        assert!(retained > discovered);
+        assert!(
+            retained - discovered <= HEADROOM,
+            "scratch must be released after construction"
+        );
+        assert_eq!(hints, provider.task_affinity(task, ctx)?);
+        assert_eq!(
+            pool.reserved(),
+            retained,
+            "cached assignments must not reserve again"
+        );
+        drop(plan);
+        assert_eq!(pool.reserved(), 0);
         Ok(())
     }
 
