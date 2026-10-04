@@ -54,7 +54,21 @@ mod tests {
         assert_eq!(records[0].files.len(), 1);
         assert_eq!(records[0].files, records[1].files);
         assert_eq!(records[0].worker, records[1].worker);
-        assert!(plan.contains("work_unit_affinity_routed_tasks"), "{plan}");
+        assert!(plan.contains("work_unit_affinity_routed_tasks=2"), "{plan}");
+        assert!(
+            plan.contains("work_unit_affinity_preferred_placements=2"),
+            "{plan}"
+        );
+        let scans: Vec<_> = plan
+            .lines()
+            .filter(|line| line.contains("format=iceberg"))
+            .collect();
+        assert_eq!(scans.len(), 2, "{plan}");
+        for scan in scans {
+            // Feed delivery and reader metrics must coexist on each scan node.
+            assert!(scan.contains("work_unit_count="), "{scan}");
+            assert!(scan.contains("output_rows="), "{scan}");
+        }
         Ok(())
     }
 
