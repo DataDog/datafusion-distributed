@@ -387,7 +387,9 @@ impl DataSource for IcebergDataSource {
     }
 
     fn metrics(&self) -> ExecutionPlanMetricsSet {
-        self.metrics.clone()
+        let mut all_metrics = self.feed.metrics().clone_inner();
+        all_metrics.extend(self.metrics.clone_inner());
+        ExecutionPlanMetricsSet::from(all_metrics)
     }
 
     fn try_pushdown_filters(
