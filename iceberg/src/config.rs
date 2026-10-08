@@ -22,7 +22,8 @@ extensions_options! {
         pub file_task_affinity: bool, default = false
         /// Maximum retained file tasks per scan; exceeding this limit fails planning.
         pub planning_max_files: usize, default = 100_000
-        /// Whether to include column statistics read during planning
+        /// Read column statistics during planning (may require another manifest pass).
+        /// Filtered planned scans retain only selected-file compressed byte estimates.
         pub column_stats_enabled: bool, default = false
     }
 }
