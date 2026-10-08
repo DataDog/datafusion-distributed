@@ -22,13 +22,14 @@ pub use arrow_ipc::CompressionType;
 pub use coordinator::DistributedExec;
 pub use distributed_ext::{DistributedExt, DistributedGetterExt};
 pub use distributed_planner::{
-    DistributedConfig, NetworkBoundary, NetworkBoundaryExt, ProducerHead, SessionStateBuilderExt,
+    ColumnByteStatisticsProvider, DistributedConfig, NetworkBoundary, NetworkBoundaryExt,
+    ProducerHead, SessionStateBuilderExt,
 };
 pub use dynamic_filtering::rewrite_distributed_plan_with_dynamic_filters;
 pub use events::{
-    CoordinatorToWorkerDialer, DesiredTaskCountEvent, DesiredTaskCountEventResponse,
-    DesiredTaskCountHandler, RouteTaskEvent, RouteTaskEventResponse, RouteTaskHandler,
-    ScaleUpLeafNodeEvent, ScaleUpLeafNodeEventResponse, ScaleUpLeafNodeHandler,
+    AffinityRouteTaskHandler, CoordinatorToWorkerDialer, DesiredTaskCountEvent,
+    DesiredTaskCountEventResponse, DesiredTaskCountHandler, RouteTaskEvent, RouteTaskEventResponse,
+    RouteTaskHandler, ScaleUpLeafNodeEvent, ScaleUpLeafNodeEventResponse, ScaleUpLeafNodeHandler,
     TaskCountAnnotation, WorkerPlanRewriteEvent, WorkerPlanRewriteEventResponse,
     WorkerPlanRewriteHandler,
 };
@@ -66,7 +67,8 @@ pub use stage::{
     DistributedTaskContext, Stage, display_plan_ascii, display_plan_graphviz, explain_analyze,
 };
 pub use work_unit_feed::{
-    DistributedWorkUnitFeedContext, WorkUnit, WorkUnitFeed, WorkUnitFeedProto, WorkUnitFeedProvider,
+    DistributedWorkUnitFeedContext, WorkUnit, WorkUnitAffinity, WorkUnitFeed, WorkUnitFeedProto,
+    WorkUnitFeedProvider, greedy_work_unit_assignment,
 };
 pub use worker::{
     CoordinatorChannelResult, DefaultSessionBuilder, MappedWorkerSessionBuilder,

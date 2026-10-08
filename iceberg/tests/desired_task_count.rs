@@ -2,6 +2,7 @@
 mod tests {
     use datafusion::common::Result;
     use datafusion_distributed::DistributedExt;
+    use datafusion_distributed_iceberg::IcebergConfig;
     use datafusion_distributed_iceberg::test_utils::{
         IcebergTestHarness, empty_taxi_metadata_builder, taxi_metadata,
     };
@@ -41,7 +42,7 @@ mod tests {
             ┌───── Stage 1 ── tasks=3, partitions=6
             │ RepartitionExec: partitioning=Hash([pickup_date@0], 6), input_partitions=2
             │   AggregateExec: mode=Partial, gby=[pickup_date@0 as pickup_date], aggr=[count(Int64(1))]
-            │     DataSourceExec: format=iceberg, projection=[pickup_date]
+            │     DataSourceExec: format=iceberg, projection=[pickup_date], planned_files=7, planned_bytes=4480382
             └──────────────────────────────────────────────────
         +-------------+-------+
         | pickup_date | trips |
@@ -121,6 +122,12 @@ mod tests {
             .configure_session(|mut state| {
                 let config = state.config().get_or_insert_default();
                 config.options_mut().execution.target_partitions = 2;
+                let mut iceberg = IcebergConfig::default();
+                iceberg.plan_files = false;
+                // Even with column bytes available, sizing must use snapshot file
+                // bytes (or remain unknown when that summary is unavailable).
+                iceberg.column_stats_enabled = true;
+                config.options_mut().extensions.insert(iceberg);
                 state.with_distributed_file_scan_config_bytes_per_partition(1_000_000)
             })?;
         if let Some(id) = snapshot_id {

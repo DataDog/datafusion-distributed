@@ -4,11 +4,15 @@ mod tests {
     use std::sync::Arc;
 
     use datafusion::common::stats::Precision;
-    use datafusion::common::{ColumnStatistics, Statistics};
+    use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
+    use datafusion::common::{ColumnStatistics, Statistics, internal_datafusion_err};
+    use datafusion::datasource::source::DataSourceExec;
     use datafusion::error::Result;
+    use datafusion::physical_plan::ExecutionPlan;
     use datafusion::physical_plan::displayable;
     use datafusion::physical_plan::statistics::{StatisticsArgs, StatisticsContext};
     use datafusion::scalar::ScalarValue;
+    use datafusion_distributed::DistributedExt;
     use datafusion_distributed_iceberg::IcebergExt;
     use datafusion_distributed_iceberg::test_utils::{
         FIXTURE_URI, IcebergTestHarness, empty_taxi_metadata_builder, taxi_metadata,
@@ -25,15 +29,15 @@ mod tests {
     const TAXI_COLUMNS: usize = 13;
 
     #[tokio::test]
-    async fn missing_snapshot_summary_statistics_are_absent() -> Result<()> {
+    async fn missing_snapshot_summary_statistics_come_from_planned_files() -> Result<()> {
         let harness = IcebergTestHarness::builder()
             .with_table_metadata(metadata_without_summary_statistics())
             .build()
             .await?;
         let stats = query_statistics(&harness, "SELECT * FROM taxi").await?;
 
-        assert_eq!(stats.num_rows, Precision::Absent);
-        assert_eq!(stats.total_byte_size, Precision::Absent);
+        assert_eq!(stats.num_rows, Precision::Exact(TAXI_ROWS));
+        assert_eq!(stats.total_byte_size, Precision::Exact(TAXI_BYTES));
         Ok(())
     }
 
@@ -66,8 +70,89 @@ mod tests {
             .await?;
         let stats = query_statistics(&harness, "SELECT * FROM taxi").await?;
 
-        assert_eq!(stats.num_rows, Precision::Exact(42));
-        assert_eq!(stats.total_byte_size, Precision::Exact(4_242));
+        // Manifest entries, not synthetic snapshot-summary totals, now determine scan cost.
+        assert_eq!(stats.num_rows, Precision::Exact(TAXI_ROWS));
+        assert_eq!(stats.total_byte_size, Precision::Exact(TAXI_BYTES));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn deletes_prevent_exact_count_optimization() -> Result<(), Box<dyn Error>> {
+        let metadata = taxi_metadata();
+        let snapshot = metadata.current_snapshot().expect("taxi has a snapshot");
+        let storage = MemoryStorage::new();
+        let data_uri = format!("{FIXTURE_URI}/metadata/deletes-test-data.avro");
+        let delete_uri = format!("{FIXTURE_URI}/metadata/deletes-test-deletes.avro");
+        let mut data_writer = ManifestWriterBuilder::new(
+            storage.new_output(&data_uri)?,
+            Some(snapshot.snapshot_id()),
+            metadata.current_schema().clone(),
+            metadata.default_partition_spec().as_ref().clone(),
+        )
+        .build_v2_data();
+        let mut delete_writer = ManifestWriterBuilder::new(
+            storage.new_output(&delete_uri)?,
+            Some(snapshot.snapshot_id()),
+            metadata.current_schema().clone(),
+            metadata.default_partition_spec().as_ref().clone(),
+        )
+        .build_v2_deletes();
+        let partition = Struct::from_iter([Some(Literal::date_from_str("2024-01-10")?)]);
+        data_writer.add_file(
+            DataFileBuilder::default()
+                .content(DataContentType::Data)
+                .file_format(DataFileFormat::Parquet)
+                .file_path(format!("{FIXTURE_URI}/data/unopened.parquet"))
+                .partition(partition.clone())
+                .record_count(100)
+                .file_size_in_bytes(1000)
+                .build()?,
+            snapshot.sequence_number() - 1,
+        )?;
+        delete_writer.add_file(
+            DataFileBuilder::default()
+                .content(DataContentType::PositionDeletes)
+                .file_format(DataFileFormat::Parquet)
+                .file_path(format!("{FIXTURE_URI}/data/unopened-deletes.parquet"))
+                .partition(partition)
+                .record_count(1)
+                .file_size_in_bytes(100)
+                .build()?,
+            snapshot.sequence_number(),
+        )?;
+        let manifests = [
+            data_writer.write_manifest_file().await?,
+            delete_writer.write_manifest_file().await?,
+        ];
+        let mut list = ManifestListWriter::v2(
+            storage
+                .new_output(snapshot.manifest_list())?
+                .writer()
+                .await?,
+            snapshot.snapshot_id(),
+            snapshot.parent_snapshot_id(),
+            snapshot.sequence_number(),
+        );
+        list.add_manifests(manifests.into_iter())?;
+        list.close().await?;
+        let harness = IcebergTestHarness::builder()
+            .with_file(&data_uri, storage.read(&data_uri).await?.to_vec())
+            .with_file(&delete_uri, storage.read(&delete_uri).await?.to_vec())
+            .with_file(
+                snapshot.manifest_list(),
+                storage.read(snapshot.manifest_list()).await?.to_vec(),
+            )
+            .build()
+            .await?;
+        let stats = query_statistics(&harness, "SELECT * FROM taxi").await?;
+        assert_eq!(stats.num_rows, Precision::Inexact(100));
+        let plan = harness.physical_plan("SELECT count(*) FROM taxi").await?;
+        assert!(
+            displayable(plan.as_ref())
+                .indent(true)
+                .to_string()
+                .contains("DataSourceExec")
+        );
         Ok(())
     }
 
@@ -109,7 +194,7 @@ mod tests {
             .to_string();
         insta::assert_snapshot!(display, @"
         CooperativeExec, statistics=[Rows=Exact(175000), Bytes=Exact(4480382), [(Col[0]:)]]
-          DataSourceExec: format=iceberg, projection=[vendor_id], statistics=[Rows=Exact(175000), Bytes=Exact(4480382), [(Col[0]:)]]
+          DataSourceExec: format=iceberg, projection=[vendor_id], planned_files=7, planned_bytes=4480382, statistics=[Rows=Exact(175000), Bytes=Exact(4480382), [(Col[0]:)]]
         ");
         Ok(())
     }
@@ -185,6 +270,75 @@ mod tests {
             ");
         }
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn filtered_column_sizes_use_selected_files_not_a_row_fraction()
+    -> Result<(), Box<dyn Error>> {
+        let harness = harness_with_manifest_metrics(true).await?;
+        let source = scan_node(
+            &harness
+                .physical_plan("SELECT vendor_id FROM taxi WHERE passenger_count < 25")
+                .await?,
+        )?;
+        let stats = StatisticsContext::new().compute(source.as_ref(), &StatisticsArgs::new())?;
+        let column = source.schema().index_of("vendor_id")?;
+        assert_eq!(stats.num_rows, Precision::Inexact(87_500));
+        // First file: 100 bytes. A retained-row fraction would incorrectly yield 200.
+        assert_eq!(
+            stats.column_statistics[column].byte_size,
+            Precision::Inexact(100)
+        );
+        assert_eq!(stats.column_statistics[column].min_value, Precision::Absent);
+        assert_eq!(
+            stats.column_statistics[column].null_count,
+            Precision::Absent
+        );
+        assert_eq!(stats.total_byte_size, Precision::Inexact(300));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn incomplete_filtered_metrics_keep_unknown_columns_and_file_byte_fallback()
+    -> Result<(), Box<dyn Error>> {
+        let harness = harness_with_manifest_metrics(true).await?;
+        let source = scan_node(
+            &harness
+                .physical_plan("SELECT trip_distance FROM taxi WHERE passenger_count < 25")
+                .await?,
+        )?;
+        let stats = StatisticsContext::new().compute(source.as_ref(), &StatisticsArgs::new())?;
+        let column = source.schema().index_of("trip_distance")?;
+        assert_eq!(stats.column_statistics[column].byte_size, Precision::Absent);
+        assert_eq!(stats.total_byte_size, Precision::Inexact(2_240_191));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn projected_bytes_do_not_reduce_scan_task_count() -> Result<(), Box<dyn Error>> {
+        let harness = harness_with_manifest_metrics(true).await?;
+        let source = scan_node(
+            &harness
+                .physical_plan("SELECT vendor_id FROM taxi WHERE passenger_count < 100")
+                .await?,
+        )?;
+        let stats = StatisticsContext::new().compute(source.as_ref(), &StatisticsArgs::new())?;
+        assert_eq!(stats.total_byte_size, Precision::Inexact(1000));
+        // 4.48 MB of file work / 1 MB / 1 partition, capped at the two files.
+        assert_eq!(harness.estimate_task_count(&source)?, Some(2));
+        Ok(())
+    }
+
+    fn scan_node(plan: &Arc<dyn ExecutionPlan>) -> Result<Arc<dyn ExecutionPlan>> {
+        let mut source = None;
+        plan.apply(|node| {
+            if node.is::<DataSourceExec>() {
+                source = Some(Arc::clone(node));
+                return Ok(TreeNodeRecursion::Stop);
+            }
+            Ok(TreeNodeRecursion::Continue)
+        })?;
+        source.ok_or_else(|| internal_datafusion_err!("expected an Iceberg scan"))
     }
 
     // Observe the query's output statistics, including projection and propagation.
@@ -310,7 +464,17 @@ mod tests {
             )
             .with_table_option("iceberg.snapshot_id", snapshot.snapshot_id().to_string())
             .with_table_metadata(metadata)
-            .configure_session(|state| Ok(state.with_iceberg_column_stats_enabled(enabled)))?
+            .configure_session(|mut state| {
+                state
+                    .config()
+                    .get_or_insert_default()
+                    .options_mut()
+                    .execution
+                    .target_partitions = 1;
+                state
+                    .with_iceberg_column_stats_enabled(enabled)
+                    .with_distributed_file_scan_config_bytes_per_partition(1_000_000)
+            })?
             .build()
             .await?)
     }

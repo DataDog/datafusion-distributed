@@ -56,7 +56,62 @@ SessionStateBuilder::new()
     .with_distributed_route_task_handler(RetryRouteTaskHandler);
 ```
 
-Routing pairs naturally with `ScaleUpLeafNodeHandler`: that decides *what* data
+## Affinity for feed-backed scans
+
+Register `AffinityRouteTaskHandler` to prefer stable data homes for providers that
+implement `WorkUnitFeedProvider::task_affinity()`:
+
+```rust
+use datafusion::execution::SessionStateBuilder;
+use datafusion_distributed::{AffinityRouteTaskHandler, DistributedExt};
+
+let builder = SessionStateBuilder::new()
+    .with_distributed_route_task_handler(AffinityRouteTaskHandler);
+```
+
+The coordinator collects task-specific hints before converting the native feeds
+to remote handles. The handler hashes each distinct key against the available
+worker URLs, then prefers the worker owning the greatest hinted weight. Duplicate
+keys use their maximum weight; independent scans are not deduplicated. Worker URL
+order and query/task IDs do not affect ownership. Worker membership changes or a
+hash implementation change on upgrade can change homes.
+
+Use URLs identifying individual stable workers, not a load balancer. There is no
+cache lookup or cache-specific dependency. This is best-effort whole-task placement,
+not per-file execution routing, work stealing, or memory admission. No hints defers
+to the existing routing handlers. Classified connection errors retain the normal
+retry/failover behavior; routing can fall back away from a preferred worker.
+
+For custom load-aware routing, inspect `event.work_unit_affinity()` and optionally
+use `AffinityRouteTaskHandler::rank_workers()`.
+
+### Affinity metrics
+
+The coordinator exposes these metrics on `DistributedExec`:
+
+| Metric | Meaning |
+| --- | --- |
+| `work_unit_affinity_routed_tasks` | Non-deferred affinity routing attempts, not individual connection attempts. |
+| `work_unit_affinity_preferred_placements` | Successful connections whose returned worker URL equals the preferred URL, including successful same-worker retries. |
+| `work_unit_affinity_fallback_placements` | Successful connections whose returned worker URL differs from the preferred URL. |
+| `work_unit_affinity_routing_failures` | Routes returning an error: terminal connection errors, exhausted retries/candidates, or resolver/configuration errors. |
+| `work_unit_affinity_routing_duration` | Summed elapsed time spent selecting and connecting, including retry backoff. This is not query wall-clock latency. |
+| `work_unit_affinity_hinted_objects` | Sum of distinct positive-weight keys per routing attempt. |
+| `work_unit_affinity_hinted_bytes` | Sum of candidate-byte estimates per routing attempt; duplicate keys use their maximum weight, as in worker ranking. |
+
+No hints, only zero-weight hints, or an empty worker list defer without recording
+these metrics. Cancellation after an attempt starts records elapsed time but no
+terminal placement/failure, so attempts can exceed the sum of outcomes. Object
+and byte totals deduplicate **within each task**, not across tasks or queries;
+byte estimates saturate at `usize::MAX` per attempt.
+
+Iceberg scan nodes also expose work-feed delivery metrics alongside reader metrics
+(e.g. `work_unit_count` and `output_rows`). Hinted bytes are neither work-feed
+serialized bytes nor actual storage reads. None of these metrics measures cache
+hits or decoded-memory usage; monitor cache/backend metrics and worker memory
+separately.
+
+Routing also pairs naturally with `ScaleUpLeafNodeHandler`: that decides *what* data
 task `i` reads, and `RouteTaskHandler` decides *where* that specialized task
 runs. The task index can be used to keep a stable slot-to-worker mapping for
 cache affinity.
