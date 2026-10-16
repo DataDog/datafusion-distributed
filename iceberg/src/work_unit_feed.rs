@@ -7,17 +7,22 @@ use datafusion::common::{Result, exec_datafusion_err, exec_err, internal_err};
 use datafusion::error::DataFusionError;
 use datafusion::execution::TaskContext;
 use datafusion::physical_expr::Partitioning;
-use datafusion_distributed::{DistributedWorkUnitFeedContext, WorkUnitFeedProvider};
+use datafusion_distributed::{
+    DistributedTaskContext, DistributedWorkUnitFeedContext, WorkUnitAffinity, WorkUnitFeedProvider,
+};
 use futures::StreamExt;
 use futures::stream::BoxStream;
 use iceberg::expr::Predicate;
-use iceberg::scan::FileScanTask;
+use iceberg::scan::{FileScanTask, TableScan};
 use prost::encoding::{DecodeContext, WireType};
 use prost::{DecodeError, Message};
 use tokio::sync::mpsc::UnboundedReceiver;
+use tokio::sync::oneshot;
 use tokio_stream::wrappers::UnboundedReceiverStream;
 
+use crate::IcebergConfig;
 use crate::common::df_err;
+use crate::planned_files::PlannedFiles;
 
 #[derive(Clone, PartialEq, prost::Message)]
 struct SerializedFileScanTask {
@@ -27,7 +32,7 @@ struct SerializedFileScanTask {
 
 #[derive(Clone, Debug)]
 enum FileScanTaskPayload {
-    Native(Box<FileScanTask>),
+    Native(Arc<FileScanTask>),
     Serialized(SerializedFileScanTask),
 }
 
@@ -48,7 +53,7 @@ impl Default for FileScanTaskWorkUnit {
 impl FileScanTaskWorkUnit {
     fn new(task: FileScanTask) -> Self {
         Self {
-            payload: FileScanTaskPayload::Native(Box::new(task)),
+            payload: FileScanTaskPayload::Native(Arc::new(task)),
         }
     }
 
@@ -57,7 +62,7 @@ impl FileScanTaskWorkUnit {
             FileScanTaskPayload::Native(task) => Cow::Owned(SerializedFileScanTask {
                 // The upstream serde implementation does not round-trip through
                 // rmp-serde's compact struct representation.
-                task: rmp_serde::to_vec_named(task)
+                task: rmp_serde::to_vec_named(task.as_ref())
                     .expect("Iceberg table scans produce serializable file scan tasks"),
             }),
             FileScanTaskPayload::Serialized(task) => Cow::Borrowed(task),
@@ -66,7 +71,7 @@ impl FileScanTaskWorkUnit {
 
     pub(crate) fn into_task(self) -> Result<FileScanTask> {
         match self.payload {
-            FileScanTaskPayload::Native(task) => Ok(*task),
+            FileScanTaskPayload::Native(task) => Ok(Arc::unwrap_or_clone(task)),
             FileScanTaskPayload::Serialized(task) => {
                 rmp_serde::from_slice(&task.task).map_err(|error| {
                     exec_datafusion_err!("failed to deserialize Iceberg file scan task: {error}")
@@ -181,6 +186,7 @@ pub struct IcebergWorkUnitFeed {
     /// TODO: Today, only Partitioning::UnknownPartitioning partitioning is supported.
     ///  Ideally, both Range partitioning and hash partitioning should be supported.
     pub(crate) partitioning: Partitioning,
+    pub(crate) planned: Option<Arc<PlannedFiles>>,
     /// Container for the lazily initialized task that scans the Iceberg table.
     /// It will start as soon as the first [IcebergWorkUnitFeed::feed] is called.
     pub(crate) sync_manager: OnceLock<Result<SyncManager, Arc<DataFusionError>>>,
@@ -194,8 +200,48 @@ impl Clone for IcebergWorkUnitFeed {
             projection: self.projection.clone(),
             predicates: self.predicates.clone(),
             partitioning: self.partitioning.clone(),
+            planned: self.planned.clone(),
             sync_manager: Default::default(),
         }
+    }
+}
+
+impl IcebergWorkUnitFeed {
+    fn table_scan(&self) -> Result<TableScan> {
+        let mut builder = match self.snapshot_id {
+            Some(id) => self.iceberg_table.scan().snapshot_id(id),
+            None => self.iceberg_table.scan(),
+        };
+        builder = match &self.projection {
+            Some(columns) => builder.select(columns),
+            None => builder.select_all(),
+        };
+        if let Some(predicate) = &self.predicates {
+            builder = builder.with_filter(predicate.clone());
+        }
+        builder.build().map_err(df_err)
+    }
+
+    pub(crate) async fn plan_files(
+        &mut self,
+        runtime: &iceberg::Runtime,
+        context: Arc<TaskContext>,
+        max_files: usize,
+    ) -> Result<()> {
+        let scan = self.table_scan()?;
+        // Metadata IO must not be polled on an embedder's IO-disabled query runtime.
+        let filtered = self.predicates.is_some();
+        // Iceberg's public join handle does not abort on drop. Dropping this sender
+        // cancels collection when the caller abandons physical planning.
+        let (_cancel_on_drop, canceled) = oneshot::channel::<()>();
+        let task = runtime.io().spawn(async move {
+            tokio::select! {
+                _ = canceled => exec_err!("Iceberg file planning canceled"),
+                result = PlannedFiles::collect(scan, context, max_files, filtered) => result,
+            }
+        });
+        self.planned = Some(Arc::new(task.await.map_err(df_err)??));
+        Ok(())
     }
 }
 
@@ -210,36 +256,88 @@ pub(crate) struct SyncManager {
 impl WorkUnitFeedProvider for IcebergWorkUnitFeed {
     type WorkUnit = FileScanTaskWorkUnit;
 
+    fn task_affinity(
+        &self,
+        task: DistributedTaskContext,
+        ctx: Arc<TaskContext>,
+    ) -> Result<Vec<WorkUnitAffinity>> {
+        let config = IcebergConfig::from_task_context(&ctx);
+        if !config.file_task_affinity {
+            return Ok(Vec::new());
+        }
+        let Some(planned) = &self.planned else {
+            return Ok(Vec::new());
+        };
+        let assignment =
+            planned.assignment(task.task_count, config.greedy_file_assignment, &ctx)?;
+        let Some(indexes) = assignment.task_files.get(task.task_index) else {
+            return internal_err!("Invalid Iceberg affinity task index {}", task.task_index);
+        };
+        Ok(indexes
+            .iter()
+            .map(|&index| {
+                let file = &planned.tasks[index];
+                WorkUnitAffinity::new(file.data_file_path(), file.length())
+            })
+            .collect())
+    }
+
     fn feed(
         &self,
         partition: usize,
         ctx: Arc<TaskContext>,
     ) -> Result<BoxStream<'static, Result<Self::WorkUnit>>> {
         let wuf_ctx = DistributedWorkUnitFeedContext::from_ctx(&ctx);
+        if let Some(planned) = &self.planned {
+            let partitions = self.partitioning.partition_count();
+            let total = partitions
+                .checked_mul(wuf_ctx.fan_out_tasks)
+                .filter(|total| *total > 0)
+                .ok_or_else(|| exec_datafusion_err!("Invalid Iceberg feed partition count"))?;
+            if partition >= total {
+                return internal_err!("Invalid feed index {partition}");
+            }
+            let config = IcebergConfig::from_task_context(&ctx);
+            if config.greedy_file_assignment {
+                let assignment = planned.assignment(wuf_ctx.fan_out_tasks, true, &ctx)?;
+                let task = partition / partitions;
+                let indexes =
+                    (partition % partitions..assignment.task_files[task].len()).step_by(partitions);
+                let planned = Arc::clone(planned);
+                return Ok(futures::stream::iter(indexes)
+                    .map(move |offset| {
+                        let index = assignment.task_files[task][offset];
+                        Ok(FileScanTaskWorkUnit {
+                            payload: FileScanTaskPayload::Native(Arc::clone(&planned.tasks[index])),
+                        })
+                    })
+                    .boxed());
+            }
+            // Inverse of worker-first routing: each feed visits every T * P-th file.
+            let first = partition / partitions + (partition % partitions) * wuf_ctx.fan_out_tasks;
+            let indexes = (first..planned.tasks.len()).step_by(total);
+            let planned = Arc::clone(planned);
+            return Ok(futures::stream::iter(indexes)
+                .map(move |index| {
+                    Ok(FileScanTaskWorkUnit {
+                        payload: FileScanTaskPayload::Native(Arc::clone(&planned.tasks[index])),
+                    })
+                })
+                .boxed());
+        }
 
         // This lazily spawns the tokio task that scans the Iceberg table.
         // Only the first IcebergWorkUnitFeed::feed call will get to execute it, and the
         // rest will just observe the already initialized result.
         let sync_manager_or_err = self.sync_manager.get_or_init(|| {
-            // Start the table scan only once for all the .feed() calls.
-            let scan_builder = match self.snapshot_id {
-                Some(snapshot_id) => self.iceberg_table.scan().snapshot_id(snapshot_id),
-                None => self.iceberg_table.scan(),
-            };
-
-            let mut scan_builder = match &self.projection {
-                Some(column_names) => scan_builder.select(column_names),
-                None => scan_builder.select_all(),
-            };
-            if let Some(pred) = &self.predicates {
-                scan_builder = scan_builder.with_filter(pred.clone());
-            }
-            let table_scan = scan_builder.build().map_err(df_err)?;
+            let table_scan = self.table_scan()?;
 
             // Fanout the FileScanTask stream across P * T output channels where:
             // - P is the number of output partitions per distributed task (`partition_count`)
             // - T is the number of distributed tasks (`fan_out_tasks`)
-            let out_partitions = wuf_ctx.fan_out_tasks * self.partitioning.partition_count();
+            let task_count = wuf_ctx.fan_out_tasks;
+            let partitions_per_task = self.partitioning.partition_count();
+            let out_partitions = task_count * partitions_per_task;
             let mut rxs = Vec::with_capacity(out_partitions);
             let mut txs = Vec::with_capacity(out_partitions);
             for _ in 0..out_partitions {
@@ -260,12 +358,13 @@ impl WorkUnitFeedProvider for IcebergWorkUnitFeed {
                     }
                 };
 
-                // Round robing across output partitions.
-                // TODO: this is fine for Partitioning::UnknownPartitioning, but any other
-                //  partitioning will require smarter routing across output channels.
+                // Workers own contiguous ranges of feed partitions. Visit workers first so
+                // a pruned scan with few files does not fill only the first worker's range.
+                // This routing assumes UnknownPartitioning, not hash or range partitioning.
                 let mut i = 0;
                 while let Some(scan_task_or_err) = stream.next().await {
-                    let partition = i % txs.len();
+                    let partition = (i % task_count) * partitions_per_task
+                        + (i / task_count) % partitions_per_task;
                     let work_unit = scan_task_or_err
                         .map(FileScanTaskWorkUnit::new)
                         .map_err(df_err);
@@ -300,5 +399,71 @@ impl WorkUnitFeedProvider for IcebergWorkUnitFeed {
                 let _ = &task_ref; // Keep the task alive as long as one feed is alive.
             })
             .boxed())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{IcebergDataSource, test_utils::IcebergTestHarness};
+    use datafusion::datasource::source::DataSourceExec;
+    use datafusion::physical_plan::ExecutionPlanProperties;
+    use datafusion::prelude::{SessionConfig, SessionContext};
+    use futures::TryStreamExt;
+
+    #[tokio::test]
+    async fn routing_hints_match_the_files_delivered_by_every_partition() -> Result<()> {
+        let scan = IcebergTestHarness::new().await?.scan().await?;
+        let source = scan.downcast_ref::<DataSourceExec>().unwrap();
+        let iceberg = source
+            .data_source()
+            .downcast_ref::<IcebergDataSource>()
+            .unwrap();
+        let provider = iceberg.feed().inner().unwrap();
+        let partitions = scan.output_partitioning().partition_count();
+        for greedy in [false, true] {
+            let mut config = SessionConfig::new();
+            config.options_mut().extensions.insert(IcebergConfig {
+                greedy_file_assignment: greedy,
+                file_task_affinity: true,
+                ..Default::default()
+            });
+            config.set_extension(Arc::new(DistributedWorkUnitFeedContext {
+                fan_out_tasks: 3,
+            }));
+            let ctx = SessionContext::new_with_config(config).task_ctx();
+            let mut all_files = Vec::new();
+            for task_index in 0..3 {
+                let task = DistributedTaskContext {
+                    task_index,
+                    task_count: 3,
+                };
+                let mut hinted: Vec<_> = provider
+                    .task_affinity(task, Arc::clone(&ctx))?
+                    .into_iter()
+                    .map(|h| (h.key, h.weight))
+                    .collect();
+                let mut delivered = Vec::new();
+                for partition in task_index * partitions..(task_index + 1) * partitions {
+                    let units: Vec<_> = provider
+                        .feed(partition, Arc::clone(&ctx))?
+                        .try_collect()
+                        .await?;
+                    for unit in units {
+                        let file = unit.into_task()?;
+                        delivered.push((file.data_file_path().to_owned(), file.length()));
+                    }
+                }
+                hinted.sort();
+                delivered.sort();
+                assert_eq!(hinted, delivered);
+                all_files.extend(delivered);
+            }
+            assert_eq!(all_files.len(), 7);
+            all_files.sort();
+            all_files.dedup();
+            assert_eq!(all_files.len(), 7);
+        }
+        Ok(())
     }
 }

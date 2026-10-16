@@ -1,14 +1,15 @@
 use std::num::NonZeroUsize;
 
 use datafusion::common::{Result, config_datafusion_err};
-use datafusion::datasource::source::{DataSource, DataSourceExec};
+use datafusion::datasource::source::DataSourceExec;
 use datafusion_distributed::{
     DesiredTaskCountEvent, DesiredTaskCountEventResponse, DistributedConfig,
 };
 
 use crate::IcebergDataSource;
 
-/// Estimates scan parallelism from the selected Iceberg snapshot's total file size.
+/// Estimates scan parallelism from pruned file bytes, capped by the available file work.
+/// Falls back to snapshot totals when planning-time file discovery is disabled.
 pub fn iceberg_desired_task_count(
     ev: DesiredTaskCountEvent,
 ) -> Option<Result<DesiredTaskCountEventResponse>> {
@@ -17,11 +18,12 @@ pub fn iceberg_desired_task_count(
         .downcast_ref::<DataSourceExec>()?
         .data_source()
         .downcast_ref::<IcebergDataSource>()?;
-    let statistics = match node.partition_statistics(None) {
-        Ok(statistics) => statistics,
+    // Relation statistics can describe only the projection. Scan parallelism
+    // still uses planned file bytes (or snapshot bytes when preplanning is off).
+    let total_bytes = match node.file_scan_bytes() {
+        Ok(bytes) => bytes?,
         Err(error) => return Some(Err(error)),
     };
-    let total_bytes = *statistics.total_byte_size.get_value()?;
     let config = DistributedConfig::from_session_config(ev.session_config).ok()?;
 
     Some(
@@ -30,7 +32,12 @@ pub fn iceberg_desired_task_count(
             config.file_scan_config_bytes_per_partition,
             ev.session_config.target_partitions(),
         )
-        .map(DesiredTaskCountEventResponse::desired),
+        .map(|count| {
+            let count = node
+                .planned_file_count()
+                .map_or(count, |files| count.min(files as f64));
+            DesiredTaskCountEventResponse::desired(count)
+        }),
     )
 }
 

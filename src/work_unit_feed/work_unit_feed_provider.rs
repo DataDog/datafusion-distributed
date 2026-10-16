@@ -1,4 +1,4 @@
-use crate::WorkUnit;
+use crate::{DistributedTaskContext, WorkUnit};
 use datafusion::common::Result;
 use datafusion::execution::TaskContext;
 use datafusion::physical_plan::metrics::ExecutionPlanMetricsSet;
@@ -83,9 +83,47 @@ pub trait WorkUnitFeedProvider: Send + Sync + Debug {
         ctx: Arc<TaskContext>,
     ) -> Result<BoxStream<'static, Result<Self::WorkUnit>>>;
 
+    /// Optional locality hints for the work assigned to one distributed task.
+    ///
+    /// Called on the coordinator before worker placement, without consuming feeds. The
+    /// task context is relative to this scan, including when it is inside an isolated
+    /// UNION child. Implementations must describe the same assignment used by `feed`.
+    /// Return no hints if work is not known yet. Hints do not merge work or affect results.
+    fn task_affinity(
+        &self,
+        _task: DistributedTaskContext,
+        _ctx: Arc<TaskContext>,
+    ) -> Result<Vec<WorkUnitAffinity>> {
+        Ok(Vec::new())
+    }
+
     /// DataFusion metrics collected at runtime while streaming [WorkUnit]s through [Self::feed].
     fn metrics(&self) -> ExecutionPlanMetricsSet {
         ExecutionPlanMetricsSet::new()
+    }
+}
+
+/// A connector-independent locality hint for immutable input data.
+///
+/// The key identifies a reusable object in its storage/access namespace (for example,
+/// an immutable blob URL). It must not include query or task IDs. Weight estimates the
+/// reusable bytes, not decoded memory or CPU cost. Repeated keys are counted once by
+/// the built-in affinity router, using their maximum weight. These are hints, not cache
+/// contents, authorization grants, or promises that the object is present on a worker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct WorkUnitAffinity {
+    pub key: String,
+    pub weight: u64,
+}
+
+impl WorkUnitAffinity {
+    /// Creates a locality hint in a caller-defined, consistently weighted namespace.
+    pub fn new(key: impl Into<String>, weight: u64) -> Self {
+        Self {
+            key: key.into(),
+            weight,
+        }
     }
 }
 
