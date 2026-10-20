@@ -199,6 +199,8 @@ mod tests {
         let mut builder = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
+            // Column statistics must not change how much work the estimator sees.
+            .with_config_option("iceberg.column_stats_enabled", true)
             .configure_session(|mut state| {
                 let config = state.config().get_or_insert_default();
                 config.options_mut().execution.target_partitions = 2;

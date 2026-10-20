@@ -20,7 +20,10 @@ use datafusion_distributed::{
 use datafusion_proto::physical_plan::AsExecutionPlan;
 use datafusion_proto::protobuf::PhysicalPlanNode;
 use iceberg::MetadataLocation;
-use iceberg::spec::{MAIN_BRANCH, TableMetadata, TableMetadataBuilder};
+use iceberg::spec::{
+    DataFile, MAIN_BRANCH, ManifestListWriter, ManifestWriterBuilder, Operation, Snapshot, Summary,
+    TableMetadata, TableMetadataBuilder,
+};
 
 use crate::FixtureTable;
 use crate::error::df_err;
@@ -110,6 +113,7 @@ pub struct IcebergTestHarnessBuilder {
     table_options: BTreeMap<String, String>,
     table: Option<FixtureTable>,
     metadata: Option<MetadataTransform>,
+    data_files: Option<Vec<DataFile>>,
     workers: Option<usize>,
 }
 
@@ -125,6 +129,7 @@ impl Default for IcebergTestHarnessBuilder {
             table_options: BTreeMap::new(),
             table: None,
             metadata: None,
+            data_files: None,
             workers: None,
         }
     }
@@ -184,6 +189,16 @@ impl IcebergTestHarnessBuilder {
         self
     }
 
+    /// Replaces the current snapshot's manifest with synthetic file entries, creating a
+    /// snapshot if needed. Data files are not written and the snapshot's summary totals are
+    /// preserved, so tests can tell summary statistics from per-file manifest metrics.
+    /// The entries' paths are never opened, so planning-only tests can describe files,
+    /// metrics and bounds directly. It applies after [`Self::with_metadata`]'s transform.
+    pub fn with_data_files(mut self, files: impl IntoIterator<Item = DataFile>) -> Self {
+        self.data_files = Some(files.into_iter().collect());
+        self
+    }
+
     /// Enables distributed planning with logical workers backed by in-memory gRPC.
     pub fn with_workers(mut self, workers: usize) -> Self {
         self.workers = Some(workers);
@@ -203,24 +218,34 @@ impl IcebergTestHarnessBuilder {
         harness.query_with_metrics(sql).await
     }
 
-    /// Registers the table, if any, from customized metadata if [`Self::with_metadata`] was
-    /// given.
+    /// Registers the table, if any, from customized metadata if [`Self::with_metadata`] or
+    /// [`Self::with_data_files`] was given.
     pub async fn build(mut self) -> Result<IcebergTestHarness> {
-        let table = match (self.table.take(), self.metadata.take()) {
-            (None, None) => None,
-            (None, Some(_)) => {
+        let table = match (
+            self.table.take(),
+            self.metadata.take(),
+            self.data_files.take(),
+        ) {
+            (None, None, None) => None,
+            (None, _, _) => {
                 return exec_err!("table metadata can only be customized for a table");
             }
-            (Some(table), None) => {
+            (Some(table), None, None) => {
                 let location = table.metadata_location()?.to_string();
                 Some((table, location))
             }
-            (Some(table), Some(metadata)) => {
-                let metadata = metadata(table.table().metadata());
+            (Some(table), metadata, data_files) => {
+                let mut customized = match metadata {
+                    Some(metadata) => metadata(table.table().metadata()),
+                    None => table.table().metadata().clone(),
+                };
+                if let Some(files) = data_files {
+                    customized = replace_manifest_with(&table, customized, files).await?;
+                }
                 let location = MetadataLocation::from_str(table.metadata_location()?)
                     .map_err(df_err)?
                     .with_next_version();
-                metadata
+                customized
                     .write_to(table.table().file_io(), &location)
                     .await
                     .map_err(df_err)?;
@@ -288,6 +313,77 @@ impl IcebergTestHarnessBuilder {
 /// the temp dir the table lives in, is the same on every run.
 pub fn data_file_name(path: &str) -> &str {
     path.rsplit_once("/data/").map_or(path, |(_, name)| name)
+}
+
+/// Writes a manifest of `files` and points the current snapshot's manifest list at it,
+/// creating a snapshot when the metadata has none. Snapshot identity and summary are kept.
+async fn replace_manifest_with(
+    table: &FixtureTable,
+    metadata: TableMetadata,
+    files: Vec<DataFile>,
+) -> Result<TableMetadata> {
+    let metadata = if metadata.current_snapshot().is_none() {
+        let snapshot = Snapshot::builder()
+            .with_snapshot_id(1)
+            .with_sequence_number(1)
+            .with_timestamp_ms(metadata.last_updated_ms() + 1)
+            .with_manifest_list(format!(
+                "{}/metadata/synthetic-manifest-list.avro",
+                metadata.location()
+            ))
+            .with_schema_id(metadata.current_schema_id())
+            .with_summary(Summary {
+                operation: Operation::Append,
+                additional_properties: Default::default(),
+            })
+            .build();
+        metadata
+            .into_builder(None)
+            .set_branch_snapshot(snapshot, MAIN_BRANCH)
+            .map_err(df_err)?
+            .build()
+            .map_err(df_err)?
+            .metadata
+    } else {
+        metadata
+    };
+    let snapshot = metadata
+        .current_snapshot()
+        .expect("snapshot initialized above");
+    let file_io = table.table().file_io();
+    let manifest_path = format!("{}/metadata/synthetic-manifest.avro", metadata.location());
+    for path in [manifest_path.as_str(), snapshot.manifest_list()] {
+        if file_io.exists(path).await.map_err(df_err)? {
+            file_io.delete(path).await.map_err(df_err)?;
+        }
+    }
+    let mut writer = ManifestWriterBuilder::new(
+        file_io.new_output(&manifest_path).map_err(df_err)?,
+        Some(snapshot.snapshot_id()),
+        Arc::clone(metadata.current_schema()),
+        metadata.default_partition_spec().as_ref().clone(),
+    )
+    .build_v2_data();
+    for file in files {
+        writer
+            .add_file(file, snapshot.sequence_number())
+            .map_err(df_err)?;
+    }
+    let manifest = writer.write_manifest_file().await.map_err(df_err)?;
+    let mut list = ManifestListWriter::v2(
+        file_io
+            .new_output(snapshot.manifest_list())
+            .map_err(df_err)?
+            .writer()
+            .await
+            .map_err(df_err)?,
+        snapshot.snapshot_id(),
+        snapshot.parent_snapshot_id(),
+        snapshot.sequence_number(),
+    );
+    list.add_manifests([manifest].into_iter()).map_err(df_err)?;
+    list.close().await.map_err(df_err)?;
+    Ok(metadata)
 }
 
 /// Starts from `metadata` with its schema, partition spec and properties, but no snapshots.
