@@ -84,10 +84,9 @@ reading and deliver descriptors through the coordinator's feed.
 
 Eager scans derive row counts and bytes from selected files and cap task estimates
 by the number of selected files. Predicates or deletes make row counts inexact;
-empty selections have exactly zero rows. Whole-snapshot column statistics are
-skipped when they would describe a different row set. Lazy scans retain snapshot
-statistics and task-size estimates. Selected-file column statistics remain a
-separate change. Task-local eager variants and decoded plans report unknown
+empty selections have exactly zero rows. When column statistics are enabled,
+eager scans aggregate selected-file metrics. Lazy scans retain snapshot statistics
+and task-size estimates. Task-local eager variants and decoded plans report unknown
 statistics rather than applying whole-snapshot aggregates to a subset.
 
 Both scans keep the filters DataFusion pushes into them, including the dynamic
@@ -97,6 +96,21 @@ or aggregate only computes a dynamic filter when a scan below it is a consumer o
 filter. Enable `iceberg.dynamic_filtering_enabled` to make Iceberg scans consumers of the
 dynamic filters pushed into them. With it on, `EXPLAIN` shows them on the scan as
 `dynamic_filters=`. Scans don't skip data with these filters yet.
+
+## Selected-file statistics
+
+With `iceberg.column_stats_enabled=true`, eager scans reconstruct column bytes,
+min/max bounds, and null counts from the **selected files**. Missing metrics remain
+unknown. Bounds are inexact; null counts also become inexact when predicates or
+deletes may remove rows. Nested column bytes sum leaf sizes without inventing
+parent bounds or null counts.
+
+Snapshot distinct-count estimates are retained as an inexact fallback, capped by
+selected-file row counts when known. They are not recomputed for the selected
+files and can overestimate the filtered result. Sum statistics remain unknown.
+
+Another manifest pass is needed because the pinned Iceberg API does not retain
+column metrics in file tasks. Scan task counts continue to use whole-file bytes.
 
 ```bash
 cargo test -p datafusion-distributed-iceberg -p datafusion-distributed-iceberg-test-tools
