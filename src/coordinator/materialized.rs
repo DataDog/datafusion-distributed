@@ -19,7 +19,8 @@ use crate::{
 use datafusion::arrow::array::{Array, BinaryArray};
 use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
 use datafusion::common::{
-    HashMap, Result, config_err, exec_datafusion_err, exec_err, internal_datafusion_err,
+    DataFusionError, HashMap, Result, config_err, exec_datafusion_err, exec_err,
+    internal_datafusion_err,
 };
 use datafusion::execution::{SendableRecordBatchStream, TaskContext};
 use datafusion::physical_plan::metrics::{Count, ExecutionPlanMetricsSet, MetricBuilder};
@@ -29,7 +30,9 @@ use datafusion::physical_plan::stream::{
 use datafusion::physical_plan::{ChildrenPropertiesMode, ExecutionPlan, ReplaceChildrenOptions};
 use futures::TryStreamExt;
 use futures::future::BoxFuture;
+use futures::stream::FuturesUnordered;
 use prost::Message;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 use tokio::sync::mpsc::unbounded_channel;
 use uuid::Uuid;
@@ -71,7 +74,7 @@ pub(super) fn execute(
             store: driver_store,
             query,
             journals: HashMap::new(),
-            retries_left: options.max_retries,
+            retries_left: AtomicUsize::new(options.max_retries),
             retries,
             rebuilds,
         };
@@ -86,11 +89,10 @@ pub(super) fn execute(
                     Err(error) => {
                         if driver.options.policy.on_error(&error) != RecoveryAction::RebuildStages
                             || generation == options.max_rebuilds
-                            || driver.retries_left == 0
+                            || !driver.take_retry()
                         {
                             return Err(error);
                         }
-                        driver.retries_left -= 1;
                         driver.rebuilds.add(1);
                         tokio::time::sleep(options.retry_delay).await;
                     }
@@ -137,7 +139,7 @@ struct Driver {
     store: Arc<MaterializedStore>,
     query: Uuid,
     journals: HashMap<(usize, usize), InputJournal>,
-    retries_left: usize,
+    retries_left: AtomicUsize,
     retries: Count,
     rebuilds: Count,
 }
@@ -211,13 +213,7 @@ impl Driver {
                     .prepare_plan(Arc::clone(&stage.plan), stage_tasks)
                     .await?;
                 let producer = boundary.producer_head(tasks)?.insert(producer)?;
-                let mut manifests = Vec::new();
-                for task in 0..stage_tasks {
-                    manifests.push(
-                        self.run_task(stage_id, task, stage_tasks, Arc::clone(&producer), false)
-                            .await?,
-                    );
-                }
+                let manifests = self.run_stage(stage_id, stage_tasks, producer).await?;
                 return make_readers(plan, tasks, &manifests);
             }
             let mut children = Vec::new();
@@ -240,8 +236,51 @@ impl Driver {
         })
     }
 
+    async fn run_stage(
+        &self,
+        stage: usize,
+        tasks: usize,
+        plan: Arc<dyn ExecutionPlan>,
+    ) -> Result<Vec<AttemptManifest>> {
+        // Futures stay owned by this stage. An error, timeout or cancellation
+        // drops every unfinished attempt before another generation can start.
+        let mut pending = FuturesUnordered::new();
+        let mut next_task = 0;
+        let mut completed = Vec::with_capacity(tasks);
+        while next_task < tasks || !pending.is_empty() {
+            while next_task < tasks && pending.len() < self.options.max_concurrent_tasks {
+                let task = next_task;
+                next_task += 1;
+                let plan = Arc::clone(&plan);
+                pending.push(async move {
+                    let manifest = self.run_task(stage, task, tasks, plan, false).await?;
+                    Ok::<_, DataFusionError>((task, manifest))
+                });
+            }
+            if let Some(manifest) = pending.try_next().await? {
+                completed.push(manifest);
+            }
+        }
+        // Exchange readers address logical task indices, never completion order.
+        completed.sort_by_key(|(task, _)| *task);
+        Ok(completed
+            .into_iter()
+            .map(|(_, manifest)| manifest)
+            .collect())
+    }
+
+    fn take_retry(&self) -> bool {
+        // This counter carries no other state: atomicity alone prevents concurrent
+        // task retries from overspending the shared task/rebuild budget.
+        self.retries_left
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |left| {
+                left.checked_sub(1)
+            })
+            .is_ok()
+    }
+
     async fn run_task(
-        &mut self,
+        &self,
         stage: usize,
         task: usize,
         tasks: usize,
@@ -310,11 +349,10 @@ impl Driver {
                 Err(error) => {
                     if self.options.policy.on_error(&error) != RecoveryAction::RetryTask
                         || retry == self.options.max_task_retries
-                        || self.retries_left == 0
+                        || !self.take_retry()
                     {
                         return Err(error);
                     }
-                    self.retries_left -= 1;
                     self.retries.add(1);
                     tokio::time::sleep(self.options.retry_delay).await;
                 }

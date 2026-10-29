@@ -33,6 +33,7 @@ config.options_mut().optimizer.enable_dynamic_filter_pushdown = false;
 // Only on the coordinator:
 config.set_extension(Arc::new(
     MaterializedExecution::new(replay_policy)
+        .with_max_concurrent_tasks(16)?
         .with_retry_limits(3, 2, 16)
         .with_timeout(Duration::from_secs(300)),
 ));
@@ -61,8 +62,18 @@ rather than silently changing the requested execution semantics.
 
 The initial implementation conservatively rebuilds all stages for lost inputs;
 selective dependency invalidation is a future optimization. Stage tasks execute
-sequentially, while all output partitions of a task are drained concurrently.
-This avoids requiring a cluster scheduler but is not a performance claim.
+concurrently, bounded by `with_max_concurrent_tasks` (default 16; must be nonzero).
+A completed task frees a slot immediately, even when an earlier task is still
+running. Successful outputs are retained while sibling tasks retry. A retrying
+task keeps its slot during backoff; all tasks share the query-wide retry budget.
+All output partitions of each task are drained concurrently and do not consume
+additional task slots. The limit applies to one query; applications still own
+cluster-wide admission and routing.
+
+Consumers start only after all required producer tasks complete. Independent
+stages are still traversed sequentially. A fatal failure or stage rebuild drops
+unfinished attempts; late remote writes remain isolated in abandoned attempt
+namespaces. This change does not introduce a cluster scheduler or pipelining.
 
 Work-unit providers are enumerated once per logical task. Their encoded payloads,
 partition assignments, and end-of-feed are journaled before that task starts.

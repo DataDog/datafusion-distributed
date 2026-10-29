@@ -11,7 +11,7 @@ mod store;
 
 pub use store::{IntermediateResultStore, MaterializedStore, ObjectStoreIntermediateStore};
 
-use datafusion::common::{DataFusionError, Result};
+use datafusion::common::{DataFusionError, Result, config_err};
 use datafusion::execution::TaskContext;
 use datafusion::physical_plan::ExecutionPlan;
 use std::fmt::Debug;
@@ -54,6 +54,7 @@ pub enum RecoveryAction {
 pub struct MaterializedExecution {
     pub(crate) policy: Arc<dyn ReplayPolicy>,
     pub(crate) max_task_retries: usize,
+    pub(crate) max_concurrent_tasks: usize,
     pub(crate) max_rebuilds: usize,
     pub(crate) max_retries: usize,
     pub(crate) retry_delay: Duration,
@@ -66,11 +67,25 @@ impl MaterializedExecution {
         Self {
             policy,
             max_task_retries: 3,
+            max_concurrent_tasks: 16,
             max_rebuilds: 2,
             max_retries: 16,
             retry_delay: Duration::from_millis(100),
             timeout: Duration::from_secs(300),
         }
+    }
+
+    /// Limit in-flight logical tasks per query (default: 16).
+    ///
+    /// A task retains its slot during retry delays. Output partitions within a
+    /// task are drained concurrently and do not count as separate task slots.
+    /// Workers remain subject to the application's routing and admission policy.
+    pub fn with_max_concurrent_tasks(mut self, tasks: usize) -> Result<Self> {
+        if tasks == 0 {
+            return config_err!("Materialized task concurrency must be nonzero");
+        }
+        self.max_concurrent_tasks = tasks;
+        Ok(self)
     }
 
     /// Bound task retries, complete rebuilds and their combined query-wide total.

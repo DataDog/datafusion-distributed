@@ -6,8 +6,9 @@ mod tests {
     use datafusion::arrow::datatypes::{DataType, Field, Schema};
     use datafusion::arrow::record_batch::RecordBatch;
     use datafusion::arrow::util::pretty::pretty_format_batches;
+    use datafusion::common::runtime::SpawnedTask;
     use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
-    use datafusion::common::{Result, exec_err};
+    use datafusion::common::{Result, exec_datafusion_err, exec_err};
     use datafusion::execution::{SessionState, SessionStateBuilder, TaskContext};
     use datafusion::object_store::{ObjectStoreExt, memory::InMemory, path::Path};
     use datafusion::physical_plan::{ExecutionPlan, execute_stream};
@@ -34,6 +35,7 @@ mod tests {
         atomic::{AtomicUsize, Ordering},
     };
     use std::time::Duration;
+    use tokio::sync::{mpsc, oneshot};
     use uuid::Uuid;
 
     #[tokio::test]
@@ -518,6 +520,144 @@ mod tests {
         Ok(())
     }
 
+    #[tokio::test]
+    async fn bounded_tasks_overlap_and_retry_without_restarting_successful_siblings() -> Result<()>
+    {
+        // Four one-partition producers, one failed attempt, then an ungated root write.
+        let (store, mut writes) = FaultStore::new(0, 0).with_blocked_writes(5);
+        let store = Arc::new(store);
+        let mut ctx = SessionContext::from(
+            session_builder(
+                Arc::clone(&store),
+                4,
+                SessionConfig::new()
+                    .with_target_partitions(1)
+                    .set_bool("datafusion.optimizer.enable_dynamic_filter_pushdown", false)
+                    .with_extension(Arc::new(MaterializedStore::new(store.clone())))
+                    .with_extension(Arc::new(
+                        MaterializedExecution::new(Arc::new(FixturePolicy(
+                            RecoveryAction::RetryTask,
+                        )))
+                        .with_max_concurrent_tasks(2)?
+                        .with_retry_limits(3, 0, 2)
+                        .with_retry_delay(Duration::ZERO),
+                    )),
+            )?
+            .build(),
+        );
+        ctx.set_distributed_work_unit_feed(|plan: &RowGeneratorExec| Some(&plan.feed));
+        ctx.set_distributed_user_codec(TestWorkUnitFeedExecCodec);
+        ctx.set_distributed_desired_task_count_handler(row_generator_desired_task_count_handler);
+        ctx.set_distributed_scale_up_leaf_node_handler(row_generator_scale_up_leaf_node_handler);
+        ctx.register_udtf("test_work_unit", Arc::new(TestWorkUnitFeedFunction));
+        let plan = ctx.sql("SELECT task FROM test_work_unit('source', 4, 'rows(1)', 'rows(1)', 'rows(1)', 'rows(1)') ORDER BY task")
+            .await?.create_physical_plan().await?;
+        let stream = execute_stream(plan, ctx.task_ctx())?;
+        let result = SpawnedTask::spawn(async move { stream.try_collect::<Vec<_>>().await });
+
+        let first = next_write(&mut writes).await;
+        let second = next_write(&mut writes).await;
+        assert_ne!(first.key, second.key);
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), writes.recv())
+                .await
+                .is_err()
+        );
+        // Keep the first producer blocked while later producers finish and retry.
+        second.release.send(Ok(())).unwrap();
+        let third = next_write(&mut writes).await;
+        third
+            .release
+            .send(exec_err!("Retry this producer"))
+            .unwrap();
+        let retry = next_write(&mut writes).await;
+        assert_ne!(retry.key, third.key);
+        retry.release.send(Ok(())).unwrap();
+        let fourth = next_write(&mut writes).await;
+        fourth.release.send(Ok(())).unwrap();
+        // No consumer may read intermediate data before the slow producer commits.
+        assert_eq!(store.data_reads.load(Ordering::SeqCst), 0);
+        first.release.send(Ok(())).unwrap();
+        let batches = tokio::time::timeout(Duration::from_secs(10), result.join_unwind())
+            .await
+            .expect("query must finish after releasing producers")
+            .expect("query task must not panic")?;
+        let formatted = pretty_format_batches(&batches)?;
+        assert_snapshot!(formatted, @r"
+        +------+
+        | task |
+        +------+
+        | 0    |
+        | 1    |
+        | 2    |
+        | 3    |
+        +------+
+        ");
+        assert_eq!(store.data_writes.load(Ordering::SeqCst), 6);
+        assert_eq!(store.failures.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn concurrent_failures_share_retry_budget_and_cancel_unfinished_attempts() -> Result<()> {
+        let (store, mut writes) = FaultStore::new(0, 0).with_blocked_writes(10);
+        let store = Arc::new(store);
+        let mut ctx = SessionContext::from(
+            session_builder(
+                Arc::clone(&store),
+                4,
+                SessionConfig::new()
+                    .with_target_partitions(1)
+                    .set_bool("datafusion.optimizer.enable_dynamic_filter_pushdown", false)
+                    .with_extension(Arc::new(MaterializedStore::new(store.clone())))
+                    .with_extension(Arc::new(
+                        MaterializedExecution::new(Arc::new(FixturePolicy(
+                            RecoveryAction::RetryTask,
+                        )))
+                        .with_max_concurrent_tasks(2)?
+                        .with_retry_limits(3, 0, 1)
+                        .with_retry_delay(Duration::ZERO),
+                    )),
+            )?
+            .build(),
+        );
+        ctx.set_distributed_work_unit_feed(|plan: &RowGeneratorExec| Some(&plan.feed));
+        ctx.set_distributed_user_codec(TestWorkUnitFeedExecCodec);
+        ctx.set_distributed_desired_task_count_handler(row_generator_desired_task_count_handler);
+        ctx.set_distributed_scale_up_leaf_node_handler(row_generator_scale_up_leaf_node_handler);
+        ctx.register_udtf("test_work_unit", Arc::new(TestWorkUnitFeedFunction));
+        let plan = ctx.sql("SELECT task FROM test_work_unit('source', 4, 'rows(1)', 'rows(1)', 'rows(1)', 'rows(1)') ORDER BY task")
+            .await?.create_physical_plan().await?;
+        let stream = execute_stream(plan, ctx.task_ctx())?;
+        let result = SpawnedTask::spawn(async move { stream.try_collect::<Vec<_>>().await });
+
+        let first = next_write(&mut writes).await;
+        let second = next_write(&mut writes).await;
+        first
+            .release
+            .send(exec_err!("First producer failed"))
+            .unwrap();
+        let mut retry = next_write(&mut writes).await;
+        // The first producer consumed the only query-wide retry. A sibling's
+        // failure must terminate the stage and cancel the blocked retry.
+        second
+            .release
+            .send(exec_err!("Second producer failed"))
+            .unwrap();
+        let error = tokio::time::timeout(Duration::from_secs(10), result.join_unwind())
+            .await
+            .expect("exhausted budget must terminate the query")
+            .expect("query task must not panic")
+            .unwrap_err();
+        assert_snapshot!(error.strip_backtrace(), @"Execution error: Second producer failed");
+        tokio::time::timeout(Duration::from_secs(10), retry.release.closed())
+            .await
+            .expect("unfinished retry must be cancelled");
+        assert_eq!(store.data_writes.load(Ordering::SeqCst), 3);
+        assert_eq!(store.data_reads.load(Ordering::SeqCst), 0);
+        Ok(())
+    }
+
     // This policy is scoped to immutable local test fixtures and built-in SQL
     // operators. Production applications must validate their own snapshots/hooks.
     #[derive(Debug)]
@@ -578,6 +718,19 @@ mod tests {
     }
 
     #[derive(Debug)]
+    struct BlockedWrite {
+        key: String,
+        release: oneshot::Sender<Result<()>>,
+    }
+
+    async fn next_write(writes: &mut mpsc::UnboundedReceiver<BlockedWrite>) -> BlockedWrite {
+        tokio::time::timeout(Duration::from_secs(10), writes.recv())
+            .await
+            .expect("producer must reach the store while its sibling is blocked")
+            .expect("write observer must remain open")
+    }
+
+    #[derive(Debug)]
     struct FaultStore {
         inner: ObjectStoreIntermediateStore,
         objects: Arc<InMemory>,
@@ -587,6 +740,9 @@ mod tests {
         puts: AtomicUsize,
         gets: AtomicUsize,
         failures: AtomicUsize,
+        data_writes: AtomicUsize,
+        data_reads: AtomicUsize,
+        blocked_writes: Option<(usize, mpsc::UnboundedSender<BlockedWrite>)>,
     }
     impl FaultStore {
         fn new(fail_put: usize, fail_get: usize) -> Self {
@@ -600,7 +756,18 @@ mod tests {
                 puts: AtomicUsize::new(0),
                 gets: AtomicUsize::new(0),
                 failures: AtomicUsize::new(0),
+                data_writes: AtomicUsize::new(0),
+                data_reads: AtomicUsize::new(0),
+                blocked_writes: None,
             }
+        }
+        fn with_blocked_writes(
+            mut self,
+            count: usize,
+        ) -> (Self, mpsc::UnboundedReceiver<BlockedWrite>) {
+            let (tx, rx) = mpsc::unbounded_channel();
+            self.blocked_writes = Some((count, tx));
+            (self, rx)
         }
         fn with_lost_input(mut self) -> Self {
             self.lose_input = true;
@@ -614,9 +781,32 @@ mod tests {
                 self.failures.fetch_add(1, Ordering::SeqCst);
                 return exec_err!("Injected interrupted output write");
             }
+            if key.ends_with(".arrow") {
+                let write = self.data_writes.fetch_add(1, Ordering::SeqCst) + 1;
+                if let Some((count, tx)) = &self.blocked_writes
+                    && write <= *count
+                {
+                    let (release, wait) = oneshot::channel();
+                    tx.send(BlockedWrite {
+                        key: key.to_owned(),
+                        release,
+                    })
+                    .map_err(|_| exec_datafusion_err!("Write observer closed"))?;
+                    if let Err(error) = wait
+                        .await
+                        .map_err(|_| exec_datafusion_err!("Write gate closed"))?
+                    {
+                        self.failures.fetch_add(1, Ordering::SeqCst);
+                        return Err(error);
+                    }
+                }
+            }
             self.inner.put(key, bytes).await
         }
         async fn get(&self, key: &str) -> Result<Bytes> {
+            if key.ends_with(".arrow") {
+                self.data_reads.fetch_add(1, Ordering::SeqCst);
+            }
             if self.gets.fetch_add(1, Ordering::SeqCst) + 1 == self.fail_get {
                 self.failures.fetch_add(1, Ordering::SeqCst);
                 if self.lose_input {
