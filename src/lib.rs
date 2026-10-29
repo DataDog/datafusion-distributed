@@ -9,6 +9,7 @@ mod distributed_planner;
 mod dynamic_filtering;
 mod execution_plans;
 mod explain_analyze;
+pub mod materialized;
 mod metrics;
 mod passthrough_headers;
 mod protocol;

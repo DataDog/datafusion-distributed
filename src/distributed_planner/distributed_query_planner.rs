@@ -10,6 +10,7 @@ use crate::distributed_planner::prepare_network_boundaries::prepare_network_boun
 use crate::distributed_planner::push_fetch_into_network_coalesce::push_fetch_into_network_coalesce;
 use crate::events::{ScaleUpLeafNodeEvent, ScaleUpLeafNodeHandlers};
 use crate::explain_analyze::DistributedAnalyzeExec;
+use crate::materialized::MaterializedExecution;
 use crate::{DistributedConfig, DistributedExec, NetworkBoundaryExt};
 use async_trait::async_trait;
 use datafusion::catalog::Session;
@@ -106,6 +107,9 @@ fn create_distributed_plan(
         let session_cfg = session.config();
         let cfg = session_cfg.options();
         let d_cfg = DistributedConfig::from_config_options(cfg)?;
+        let materialized = session_cfg
+            .get_extension::<MaterializedExecution>()
+            .is_some();
 
         // The plan already contains network boundaries set by the user. Just ensure they have nice
         // unique identifiers for each stage, and move forward with it.
@@ -127,7 +131,7 @@ fn create_distributed_plan(
             })?;
             // Ensure the stages in the plan have nice unique identifiers.
             let plan = prepare_network_boundaries(scaled.data)?;
-            if !plan.exists(|plan| Ok(plan.is_network_boundary()))? {
+            if !materialized && !plan.exists(|plan| Ok(plan.is_network_boundary()))? {
                 return Ok(plan);
             }
             let plan = push_fetch_into_network_coalesce(plan)?;
@@ -156,7 +160,7 @@ fn create_distributed_plan(
             .await?;
 
         plan = prepare_network_boundaries(plan)?;
-        if !plan.exists(|plan| Ok(plan.is_network_boundary()))? {
+        if !materialized && !plan.exists(|plan| Ok(plan.is_network_boundary()))? {
             return Ok(original_plan);
         }
 

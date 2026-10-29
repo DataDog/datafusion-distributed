@@ -6,6 +6,7 @@ use crate::coordinator::store::{Store, task_keys_for_plan};
 use crate::dynamic_filtering::{
     is_local_dynamic_filtering_enabled, sever_dynamic_filter_relationships_in_plan_for_display,
 };
+use crate::materialized::MaterializedExecution;
 use crate::{DistributedConfig, TaskCompletedDynamicFilters, TaskKey, TaskMetrics};
 use datafusion::common::internal_datafusion_err;
 use datafusion::common::tree_node::TreeNodeRecursion;
@@ -215,6 +216,19 @@ impl ExecutionPlan for DistributedExec {
             // producing an invalid plan
             return exec_err!(
                 "DistributedExec must only have 1 partition, but it was called with partition index {partition}"
+            );
+        }
+
+        if let Some(options) = context
+            .session_config()
+            .get_extension::<MaterializedExecution>()
+        {
+            return super::materialized::execute(
+                Arc::clone(&self.base_plan),
+                context,
+                options,
+                Arc::clone(&self.prepared_plan),
+                &self.metrics,
             );
         }
 

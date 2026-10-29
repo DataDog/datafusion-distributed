@@ -13,7 +13,9 @@ use crate::dynamic_filtering::{
 use crate::events::{
     RouteTaskEvent, RouteTaskEventResponse, RouteTaskHandlers, new_coordinator_to_worker_dialer,
 };
-use crate::execution_plans::{ChildrenIsolatorUnionExec, DistributedLeafExec};
+use crate::execution_plans::{
+    ChildrenIsolatorUnionExec, DistributedLeafExec, MaterializedWriterExec,
+};
 use crate::passthrough_headers::get_passthrough_headers;
 use crate::stage::LocalStage;
 use crate::work_unit_feed::WorkUnitFeedRegistry;
@@ -456,7 +458,7 @@ impl<'a> StageCoordinator<'a> {
     /// trimming down any unnecessary information that the specific `task_i` task is not going to
     /// need, like unexecuted branches in [ChildrenIsolatorUnionExec], or unexecuted variants of
     /// [DistributedLeafExec].
-    fn task_specialized_plan(&self, task_i: usize) -> Result<TaskSpecializedPlan> {
+    pub(super) fn task_specialized_plan(&self, task_i: usize) -> Result<TaskSpecializedPlan> {
         let session_config = self.task_ctx.session_config();
         let wuf_registry = session_config
             .get_extension::<WorkUnitFeedRegistry>()
@@ -512,7 +514,10 @@ impl<'a> StageCoordinator<'a> {
             // we are explicitly not retransforming the entire plan. if other operators cause shared state errors they will error out.
             Ok(Transformed::no(plan))
         })?;
-        let plan = if dynamic_filtering_enabled {
+        let plan = if self.plan.downcast_ref::<MaterializedWriterExec>().is_some() {
+            // Retryable attempts require fresh state even on a colocated transport.
+            roundtrip_pb(transformed.data, self.task_ctx)?
+        } else if dynamic_filtering_enabled {
             maybe_roundtrip_plan_to_sever_in_memory_dynamic_filter_relationships(
                 Arc::clone(&transformed.data),
                 self.task_ctx,
@@ -547,9 +552,9 @@ enum RuntimeUpdate {
     LoadInfoEos,
 }
 
-struct TaskSpecializedPlan {
-    plan: Arc<dyn ExecutionPlan>,
-    work_unit_feed_declarations: Vec<WorkUnitFeedDeclaration>,
+pub(super) struct TaskSpecializedPlan {
+    pub(super) plan: Arc<dyn ExecutionPlan>,
+    pub(super) work_unit_feed_declarations: Vec<WorkUnitFeedDeclaration>,
     dynamic_filter_remote_producer_ids: Vec<u64>,
 }
 
