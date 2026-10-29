@@ -1,4 +1,5 @@
 mod distributed_codec;
+mod materialized;
 mod physical_plan;
 mod user_codec;
 

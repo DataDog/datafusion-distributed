@@ -1,4 +1,5 @@
 use super::get_distributed_user_codecs;
+use super::materialized::MaterializedCodec;
 use crate::common::{deserialize_uuid, require_one_child, serialize_uuid};
 use crate::events::TaskCountRestriction;
 use crate::execution_plans::{
@@ -46,7 +47,8 @@ pub struct DistributedCodec;
 
 impl DistributedCodec {
     pub fn new_combined_with_user(cfg: &SessionConfig) -> ComposedPhysicalExtensionCodec {
-        let mut codecs: Vec<Arc<dyn PhysicalExtensionCodec>> = vec![Arc::new(DistributedCodec {})];
+        let mut codecs: Vec<Arc<dyn PhysicalExtensionCodec>> =
+            vec![Arc::new(MaterializedCodec), Arc::new(DistributedCodec {})];
         codecs.extend(get_distributed_user_codecs(cfg));
         ComposedPhysicalExtensionCodec::new(codecs)
     }
@@ -504,7 +506,7 @@ impl PhysicalExtensionCodec for DistributedCodec {
     }
 }
 
-fn serialize_equivalence_group(
+pub(super) fn serialize_equivalence_group(
     properties: &EquivalenceProperties,
     codec: &dyn PhysicalExtensionCodec,
     proto_converter: &dyn PhysicalProtoConverterExtension,
@@ -522,7 +524,7 @@ fn serialize_equivalence_group(
         .collect()
 }
 
-fn parse_equivalence_properties(
+pub(super) fn parse_equivalence_properties(
     equivalence_classes: Vec<EquivalenceClassProto>,
     schema: SchemaRef,
     decode_ctx: &PhysicalPlanDecodeContext<'_>,
