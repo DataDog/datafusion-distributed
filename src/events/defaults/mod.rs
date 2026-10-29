@@ -6,5 +6,5 @@ pub(crate) use file_scan_config::{
 };
 pub(crate) use routing::{
     RandomRouteTaskHandler, SingleTaskChildUrlRouteTaskHandler,
-    SingleTaskCoordinatorRouteTaskHandler,
+    SingleTaskCoordinatorRouteTaskHandler, dial_with_failover,
 };

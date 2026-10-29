@@ -1,5 +1,6 @@
+use super::defaults::dial_with_failover;
 use crate::events::common::EventHandlerChain;
-use crate::{TaskKey, WorkerResolver, WorkerToCoordinatorMsg};
+use crate::{DistributedConfig, TaskKey, WorkerResolver, WorkerToCoordinatorMsg};
 use async_trait::async_trait;
 use datafusion::common::Result;
 use datafusion::execution::TaskContext;
@@ -31,6 +32,24 @@ pub struct RouteTaskEvent<'a> {
     /// `dialer.dial()` can be called multiple times over different URLs until one successfully
     /// connects.
     pub dialer: &'a dyn CoordinatorToWorkerDialer,
+}
+
+impl RouteTaskEvent<'_> {
+    /// Connects to the preferred worker using DFD's normal retry and failover policy.
+    ///
+    /// Custom placement handlers can select a preferred URL without changing how overload,
+    /// retryable connection errors, backoff, or terminal errors are handled. Other registered
+    /// workers remain eligible for failover, and retries use the query's distributed settings.
+    pub async fn dial_with_failover(&self, preferred: Url) -> Result<RouteTaskEventResponse> {
+        dial_with_failover(
+            self.dialer,
+            preferred,
+            self.worker_resolver.get_urls()?,
+            self.metrics,
+            DistributedConfig::from_task_context(self.task_ctx)?,
+        )
+        .await
+    }
 }
 
 /// A worker connection selected by a [`RouteTaskHandler`].
@@ -111,4 +130,60 @@ where
     }
 
     S(f)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::RetryOutcome;
+    use crate::test_utils::in_memory_channel_resolver::InMemoryWorkerResolver;
+    use datafusion::arrow::datatypes::Schema;
+    use datafusion::common::exec_datafusion_err;
+    use datafusion::physical_plan::empty::EmptyExec;
+    use datafusion::prelude::SessionConfig;
+    use std::sync::Mutex;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn preferred_worker_uses_classified_failover() -> Result<()> {
+        let workers = InMemoryWorkerResolver::new(2);
+        let urls = workers.get_urls()?;
+        let preferred = urls[0].clone();
+        let calls = Mutex::new(Vec::new());
+        let dialer = new_coordinator_to_worker_dialer(|url: Url| {
+            calls.lock().unwrap().push(url.clone());
+            let rejected = url == preferred;
+            async move {
+                if rejected {
+                    return Err(RetryOutcome::OtherUrl.tag(exec_datafusion_err!("overloaded")));
+                }
+                Ok(RouteTaskEventResponse {
+                    url,
+                    worker_to_coordinator_stream: Box::pin(futures::stream::empty()),
+                })
+            }
+        });
+        let context = Arc::new(TaskContext::default().with_session_config(
+            SessionConfig::new().with_option_extension(DistributedConfig::default()),
+        ));
+        let plan = Arc::new(EmptyExec::new(Arc::new(Schema::empty()))) as Arc<dyn ExecutionPlan>;
+        let metrics = ExecutionPlanMetricsSet::new();
+        let event = RouteTaskEvent {
+            task_ctx: &context,
+            metrics: &metrics,
+            worker_resolver: &workers,
+            task_key: TaskKey {
+                query_id: Uuid::nil(),
+                stage_id: 0,
+                task_number: 0,
+            },
+            task_count: 1,
+            task_specialized_plan: &plan,
+            dialer: &dialer,
+        };
+        let response = event.dial_with_failover(preferred.clone()).await?;
+        assert_eq!(response.url, urls[1]);
+        assert_eq!(*calls.lock().unwrap(), urls);
+        Ok(())
+    }
 }

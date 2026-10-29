@@ -11,12 +11,20 @@ pub(crate) fn assign_files<'a>(
     files: impl Iterator<Item = &'a FileScanTask>,
     task_count: usize,
     partitions_per_task: usize,
+    greedy: bool,
 ) -> Result<Vec<Vec<Vec<usize>>>> {
     if task_count
         .checked_mul(partitions_per_task)
         .is_none_or(|count| count == 0)
     {
         return exec_err!("Invalid Iceberg assignment partition count");
+    }
+    if !greedy {
+        let mut groups = vec![vec![Vec::new(); partitions_per_task]; task_count];
+        for (index, _) in files.enumerate() {
+            groups[index % task_count][(index / task_count) % partitions_per_task].push(index);
+        }
+        return Ok(groups);
     }
     let files: Vec<_> = files.collect();
     let mut indices: Vec<_> = (0..files.len()).collect();
