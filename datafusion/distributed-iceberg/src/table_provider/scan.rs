@@ -131,9 +131,14 @@ pub(crate) async fn plan_scan(
         if let Some(column_stats) = column_stats {
             apply_column_statistics(&mut statistics, column_stats);
         }
-        let partitions = assign_files(planned.tasks().iter(), 1, partitioning.partition_count())?
-            .pop()
-            .expect("one task was assigned");
+        let partitions = assign_files(
+            planned.tasks().iter(),
+            1,
+            partitioning.partition_count(),
+            IcebergConfig::from_task_context(&context).greedy_file_assignment,
+        )?
+        .pop()
+        .expect("one task was assigned");
         return Ok(DataSourceExec::from_data_source(EagerIcebergDataSource {
             scan,
             statistics: Arc::new(statistics),

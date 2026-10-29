@@ -104,6 +104,19 @@ files and can overestimate the filtered result. Sum statistics remain unknown.
 Another manifest pass is needed because the pinned Iceberg API does not retain
 column metrics in file tasks. Scan task counts continue to use whole-file bytes.
 
+This integration branch also exports `datafusion_distributed::ColumnByteStatisticsProvider`.
+To preserve available column-byte estimates through grouping keys and inner joins,
+register it with `SessionStateBuilder::with_statistics_registry` using
+`StatisticsRegistry::with_providers(vec![Arc::new(ColumnByteStatisticsProvider)])`,
+and enable `datafusion.optimizer.use_statistics_registry`. The provider retains the
+operators' normal row-count estimates; compressed column bytes remain a heuristic,
+not a measurement of join memory. It is not registered automatically by Iceberg.
+
+`iceberg.greedy_file_assignment=false` keeps task-first round-robin assignment for
+comparison with byte balancing. It only affects eager scans. Embedders registering
+custom codecs must register both eager and lazy codecs plus `iceberg_scale_up`;
+`IcebergExt::with_iceberg_integration` installs these for the default codecs.
+
 ```bash
 cargo test -p datafusion-distributed-iceberg -p datafusion-distributed-iceberg-test-tools
 ```

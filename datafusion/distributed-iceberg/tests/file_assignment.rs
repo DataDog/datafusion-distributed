@@ -45,6 +45,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn disabling_byte_balancing_keeps_task_first_round_robin() -> Result<(), Box<dyn Error>> {
+        // Each inner array is one commit, with one file per row count.
+        let harness = IcebergTestHarness::builder()
+            .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
+            .with_table(table_of_files([[100_000, 90_000, 10_000, 5_000, 4_000, 3_000]]).await?)
+            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.greedy_file_assignment", false)
+            .with_workers(2)
+            .configure_session(|mut state| {
+                let session = state.config().get_or_insert_default();
+                session.options_mut().execution.target_partitions = 2;
+                state.with_distributed_file_scan_config_bytes_per_partition(1)
+            })?
+            .build()
+            .await?;
+        let plan = harness.physical_plan("SELECT * FROM files").await?;
+        insta::assert_snapshot!(assignments(&plan)?, @r"
+        task 0: 1140319 bytes
+          partition 0: [1-00000.parquet (1003586 bytes), 1-00004.parquet (38605 bytes)]
+          partition 1: [1-00002.parquet (98128 bytes)]
+        task 1: 980151 bytes
+          partition 0: [1-00001.parquet (902316 bytes), 1-00005.parquet (29103 bytes)]
+          partition 1: [1-00003.parquet (48732 bytes)]
+        ");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn reversed_manifest_order_preserves_task_balance() -> Result<(), Box<dyn Error>> {
         // Each inner array is one commit, with one file per row count.
         let harness = IcebergTestHarness::builder()
