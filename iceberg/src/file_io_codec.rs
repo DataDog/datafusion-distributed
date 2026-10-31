@@ -1,3 +1,7 @@
+#[allow(
+    clippy::disallowed_types,
+    reason = "FileIO properties and Prost map fields use std HashMap"
+)]
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::Arc;
@@ -19,12 +23,20 @@ pub trait IcebergFileIOCodec: Debug + Send + Sync {
 }
 
 /// Shared file IO handling for eager and lazy plan codecs.
+#[allow(
+    clippy::disallowed_types,
+    reason = "FileIO properties and Prost map fields use std HashMap"
+)]
 #[derive(Debug, Clone)]
 pub(crate) struct FileIOCodec {
     storage_factory: Arc<dyn StorageFactory>,
     pub(crate) custom: Option<Arc<dyn IcebergFileIOCodec>>,
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "FileIO properties and Prost map fields use std HashMap"
+)]
 impl FileIOCodec {
     pub(crate) fn new(storage_factory: Arc<dyn StorageFactory>) -> Self {
         Self {
@@ -69,12 +81,20 @@ impl FileIOCodec {
     }
 }
 
+#[allow(
+    clippy::disallowed_types,
+    reason = "FileIO properties and Prost map fields use std HashMap"
+)]
 pub(crate) struct EncodedFileIO {
     pub(crate) properties: HashMap<String, String>,
     pub(crate) custom: Option<Vec<u8>>,
 }
 
 #[cfg(test)]
+#[allow(
+    clippy::disallowed_types,
+    reason = "FileIO properties and Prost map fields use std HashMap"
+)]
 mod tests {
     use super::*;
     use iceberg::io::LocalFsStorageFactory;
