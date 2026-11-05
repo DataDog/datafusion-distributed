@@ -110,7 +110,8 @@ impl TaskData {
             let producer_head =
                 producer_head.ensure_decoded(self.base_plan.schema(), &self.task_ctx)?;
 
-            Ok(producer_head.insert(Arc::clone(&self.base_plan))?)
+            Ok(producer_head
+                .insert_for_session(Arc::clone(&self.base_plan), self.task_ctx.session_config())?)
         });
         match result {
             Ok(plan) => Ok(Arc::clone(plan)),
