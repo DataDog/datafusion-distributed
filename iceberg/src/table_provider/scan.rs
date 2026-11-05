@@ -2,7 +2,9 @@ use crate::common::df_err;
 use crate::common::scan_config::{ScanConfig, apply_column_statistics};
 use crate::eager::assign_files;
 use crate::eager::planned_files::PlannedFiles;
-use crate::table_provider::column_statistics::{compute_column_stats, selected_column_statistics};
+use crate::table_provider::column_statistics::{
+    column_stats_names, compute_column_stats, selected_column_statistics,
+};
 use crate::{EagerIcebergDataSource, IcebergConfig, IcebergWorkUnitFeed, LazyIcebergDataSource};
 use datafusion::arrow::datatypes::SchemaRef;
 use datafusion::common::{Result, config_err, exec_err};
@@ -60,6 +62,25 @@ pub(crate) async fn plan_scan(
             .unwrap_or_else(iceberg::Runtime::current),
         &context,
     );
+    // The columns whose statistics are requested, with the schema that names them.
+    let stats_fields = if IcebergConfig::from_task_context(&context).column_stats_enabled {
+        let schema = match &table_snapshot {
+            Some(snap) => snap.schema(table.metadata()).map_err(df_err)?,
+            // empty table
+            None => table.metadata().current_schema().clone(),
+        };
+        let fields = schema.as_struct().fields();
+        let fields: Vec<_> = match opts.projection {
+            Some(projection) => projection
+                .iter()
+                .map(|&idx| Arc::clone(&fields[idx]))
+                .collect(),
+            None => fields.to_vec(),
+        };
+        Some((schema, fields))
+    } else {
+        None
+    };
     let planned = if IcebergConfig::from_task_context(&context).eager_file_planning {
         if partitioning.partition_count() == 0 {
             return config_err!("Iceberg scan requires at least one output partition");
@@ -74,6 +95,10 @@ pub(crate) async fn plan_scan(
         if let Some(predicates) = &predicates {
             builder = builder.with_filter(predicates.clone());
         }
+        if let Some((schema, fields)) = &stats_fields {
+            // Keep each file's metrics on its task, so statistics need no second manifest pass.
+            builder = builder.with_column_stats(column_stats_names(schema, fields)?);
+        }
         let table_scan = builder.build().map_err(df_err)?;
         // File discovery runs on Iceberg's I/O runtime and is canceled if planning is dropped.
         let (_cancel_on_drop, canceled) = oneshot::channel::<()>();
@@ -84,7 +109,7 @@ pub(crate) async fn plan_scan(
                 planned = PlannedFiles::collect(table_scan, &planning_context) => planned,
             }
         });
-        Some(Arc::new(task.await.map_err(df_err)??))
+        Some(task.await.map_err(df_err)??)
     } else {
         None
     };
@@ -92,33 +117,17 @@ pub(crate) async fn plan_scan(
         || planned
             .as_ref()
             .is_some_and(|files| files.tasks().iter().any(|task| !task.deletes().is_empty()));
-    let column_stats = if IcebergConfig::from_task_context(&context).column_stats_enabled {
-        let schema = match &table_snapshot {
-            Some(snap) => snap.schema(table.metadata()).map_err(df_err)?,
-            // empty table
-            None => table.metadata().current_schema().clone(),
-        };
-        let fields = schema.as_struct().fields();
-        let fields: Vec<_> = match opts.projection {
-            Some(projection) => projection
-                .iter()
-                .map(|&idx| Arc::clone(&fields[idx]))
-                .collect(),
-            None => fields.to_vec(),
-        };
+    let column_stats = if let Some((_, fields)) = &stats_fields {
         if let Some(files) = &planned
             && let Some(snapshot) = &table_snapshot
         {
-            Some(
-                selected_column_statistics(
-                    &table,
-                    snapshot,
-                    &fields,
-                    files.tasks(),
-                    may_filter_rows,
-                )
-                .await?,
-            )
+            Some(selected_column_statistics(
+                &table,
+                snapshot,
+                fields,
+                files.tasks(),
+                may_filter_rows,
+            )?)
         } else {
             let field_ids = fields.iter().map(|field| field.id).collect();
             Some(compute_column_stats(table.clone(), field_ids, table_snapshot.clone()).await?)
@@ -126,7 +135,10 @@ pub(crate) async fn plan_scan(
     } else {
         None
     };
-    if let Some(planned) = planned {
+    if let Some(mut planned) = planned {
+        // The metrics are summarized above; keep them off the tasks sent to workers.
+        planned.drop_column_stats();
+        let planned = Arc::new(planned);
         let mut statistics = planned.statistics(&scan.schema, may_filter_rows);
         if let Some(column_stats) = column_stats {
             apply_column_statistics(&mut statistics, column_stats);
