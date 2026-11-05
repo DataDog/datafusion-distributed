@@ -13,6 +13,11 @@ members = [
 datafusion = { version = "55", default-features = false }
 datafusion-proto = { version = "55", default-features = false }
 
+# datafusion-iceberg depends on apache/iceberg-rust; use the same fork so FileScanTask is one type.
+[patch."https://github.com/apache/iceberg-rust"]
+iceberg = { git = "https://github.com/DataDog/iceberg-rust", branch = "alex.bianchi/datafusion-55-pr-3081-column-stats" }
+iceberg-storage-opendal = { git = "https://github.com/DataDog/iceberg-rust", branch = "alex.bianchi/datafusion-55-pr-3081-column-stats" }
+
 [package]
 name = "datafusion-distributed"
 version = "4.0.0"

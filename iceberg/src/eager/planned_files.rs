@@ -6,7 +6,8 @@ use datafusion::common::{Result, Statistics};
 use datafusion::execution::TaskContext;
 use datafusion::execution::memory_pool::{MemoryConsumer, MemoryReservation};
 use futures::TryStreamExt;
-use iceberg::scan::{FileScanTask, TableScan};
+use iceberg::scan::{FileScanTask, FileScanTaskColumnStats, TableScan};
+use iceberg::spec::{Datum, PrimitiveLiteral};
 
 use crate::common::df_err;
 
@@ -62,6 +63,18 @@ impl PlannedFiles {
         Ok(())
     }
 
+    /// Drops the per-file column metrics retained for statistics, which are not needed to
+    /// read the files and would otherwise be serialized along with each task.
+    pub(crate) fn drop_column_stats(&mut self) {
+        for task in &mut self.tasks {
+            let before = retained_size(task);
+            drop(task.take_column_stats());
+            let after = retained_size(task);
+            self._reservation
+                .shrink(before.saturating_sub(after).saturating_mul(2));
+        }
+    }
+
     pub(crate) fn from_tasks(tasks: Vec<FileScanTask>, context: &TaskContext) -> Result<Self> {
         let mut planned = Self::new(context);
         for task in tasks {
@@ -86,6 +99,9 @@ fn retained_size(task: &FileScanTask) -> usize {
         + size_of_val(task.project_field_ids())
         + size_of_val(task.deletes())
         + task.key_metadata().map_or(0, <[u8]>::len);
+    if let Some(stats) = task.column_stats() {
+        bytes = bytes.saturating_add(column_stats_size(stats));
+    }
     for delete in task.deletes() {
         bytes = bytes
             .saturating_add(delete.file_path().len())
@@ -94,4 +110,30 @@ fn retained_size(task: &FileScanTask) -> usize {
             .saturating_add(delete.key_metadata().map_or(0, <[u8]>::len));
     }
     bytes
+}
+
+/// Approximate heap size of the metrics a task retains for column statistics.
+fn column_stats_size(stats: &FileScanTaskColumnStats) -> usize {
+    let counts = [
+        stats.column_sizes(),
+        stats.value_counts(),
+        stats.null_value_counts(),
+        stats.nan_value_counts(),
+    ]
+    .iter()
+    .map(|counts| counts.len() * size_of::<(i32, u64)>())
+    .sum::<usize>();
+    let bounds = [stats.lower_bounds(), stats.upper_bounds()]
+        .iter()
+        .flat_map(|bounds| bounds.values())
+        .map(|bound| {
+            size_of::<(i32, Datum)>()
+                + match bound.literal() {
+                    PrimitiveLiteral::String(value) => value.len(),
+                    PrimitiveLiteral::Binary(value) => value.len(),
+                    _ => 0,
+                }
+        })
+        .sum::<usize>();
+    size_of::<FileScanTaskColumnStats>() + counts + bounds
 }

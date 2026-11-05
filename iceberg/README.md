@@ -101,8 +101,10 @@ Snapshot distinct-count estimates are retained as an inexact fallback, capped by
 selected-file row counts when known. They are not recomputed for the selected
 files and can overestimate the filtered result. Sum statistics remain unknown.
 
-Another manifest pass is needed because the pinned Iceberg API does not retain
-column metrics in file tasks. Scan task counts continue to use whole-file bytes.
+The metrics come from the planned file tasks themselves: the scan asks Iceberg to
+retain the statistics columns' metrics (`TableScanBuilder::with_column_stats`, from
+DataDog's iceberg-rust fork), so no manifest is read a second time. They are dropped
+from the tasks once summarized. Scan task counts continue to use whole-file bytes.
 
 This integration branch also exports `datafusion_distributed::ColumnByteStatisticsProvider`.
 To preserve available column-byte estimates through grouping keys and inner joins,
