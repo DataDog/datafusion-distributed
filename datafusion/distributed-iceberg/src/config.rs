@@ -14,7 +14,7 @@ extensions_options! {
         pub row_group_filtering_enabled: bool, default = true
         /// Whether to apply row-level selections while reading Parquet files.
         pub row_selection_enabled: bool, default = false
-        /// Read column statistics during planning (may require another manifest pass).
+        /// Read column statistics during planning (retained from the files selected during planning).
         /// Eager scans aggregate selected-file metrics and retain inexact snapshot NDV.
         pub column_stats_enabled: bool, default = false
         /// Discover and retain file tasks during physical planning instead of execution.
