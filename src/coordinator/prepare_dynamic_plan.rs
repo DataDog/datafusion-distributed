@@ -23,7 +23,6 @@ use datafusion::physical_plan::{
     ColumnStatistics, ExecutionPlan, ExecutionPlanProperties, Statistics, StatisticsArgs,
     StatisticsContext,
 };
-use datafusion::prelude::SessionConfig;
 use futures::{Stream, StreamExt};
 use std::any::TypeId;
 use std::num::NonZeroUsize;
@@ -84,10 +83,7 @@ pub(super) async fn prepare_dynamic_plan(
             input_stage.tasks = task_count.as_usize();
             // In order to infer the compute the cost of the stage above this one, here a sampler
             // is injected to gather runtime statistics.
-            input_stage.plan = ProducerHead::insert_sampler_for_session(
-                input_stage.plan,
-                query_coordinator.session_config(),
-            )?;
+            input_stage.plan = ProducerHead::insert_sampler(input_stage.plan)?;
             let dynamic_filter_anchors =
                 if is_remote_dynamic_filtering_enabled(query_coordinator.session_config())? {
                     orphan_dynamic_filter_consumers(&input_stage.plan)?
@@ -161,7 +157,7 @@ pub(super) async fn prepare_dynamic_plan(
     .await?;
 
     Ok(PreparedPlan {
-        plan_for_viz: plans_for_viz.reconstruct(&head_stage, query_coordinator.session_config())?,
+        plan_for_viz: plans_for_viz.reconstruct(&head_stage)?,
         head_stage,
     })
 }
@@ -186,11 +182,7 @@ impl PlanReconstructor {
         self.stage_map.insert(stage, (plan, metrics_set));
     }
 
-    fn reconstruct(
-        &self,
-        head_stage: &Arc<dyn ExecutionPlan>,
-        config: &SessionConfig,
-    ) -> Result<Arc<dyn ExecutionPlan>> {
+    fn reconstruct(&self, head_stage: &Arc<dyn ExecutionPlan>) -> Result<Arc<dyn ExecutionPlan>> {
         let head_stage = Arc::clone(head_stage);
         let reconstructed = head_stage.transform_down_with_task_count(1, |plan, tc| {
             let Some(nb) = plan.as_network_boundary() else {
@@ -205,9 +197,7 @@ impl PlanReconstructor {
             };
             let (plan_for_viz, metrics_set) = entry;
 
-            let plan_for_viz = nb
-                .producer_head(tc)?
-                .insert_for_session(plan_for_viz, config)?;
+            let plan_for_viz = nb.producer_head(tc)?.insert(plan_for_viz)?;
 
             let nb = nb.with_input_stage(Stage::Local(LocalStage {
                 query_id: input_stage.query_id(),

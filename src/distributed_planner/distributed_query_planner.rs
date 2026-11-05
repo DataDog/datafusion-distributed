@@ -106,6 +106,7 @@ fn create_distributed_plan(
         let session_cfg = session.config();
         let cfg = session_cfg.options();
         let d_cfg = DistributedConfig::from_config_options(cfg)?;
+        d_cfg.validate_execution_options()?;
 
         // The plan already contains network boundaries set by the user. Just ensure they have nice
         // unique identifiers for each stage, and move forward with it.

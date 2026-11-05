@@ -9,7 +9,6 @@ mod partial_reduce_below_network_shuffles;
 mod prepare_network_boundaries;
 mod push_fetch_into_network_coalesce;
 mod session_state_builder_ext;
-mod stage_envelope;
 mod statistics;
 
 pub use distributed_config::DistributedConfig;
@@ -20,5 +19,3 @@ pub use network_boundary::{NetworkBoundary, NetworkBoundaryExt, ProducerHead};
 pub use session_state_builder_ext::SessionStateBuilderExt;
 pub use statistics::ColumnByteStatisticsProvider;
 pub(crate) use statistics::calculate_cost;
-
-pub use stage_envelope::register_distributed_stage_envelope;

@@ -208,6 +208,7 @@ impl ExecutionPlan for DistributedExec {
         partition: usize,
         context: Arc<TaskContext>,
     ) -> Result<SendableRecordBatchStream> {
+        DistributedConfig::from_task_context(&context)?.validate_execution_options()?;
         if partition > 0 {
             // The DistributedExec node calls try_assign_urls() lazily upon calling .execute(). This means
             // that .execute() must only be called once, as we cannot afford to perform several

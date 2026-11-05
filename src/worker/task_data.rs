@@ -1,6 +1,8 @@
 use crate::common::OnceLockResult;
 use crate::common::now_ns;
-use crate::{MaxLatencyMetric, ProducerHead, TaskCompletedDynamicFilters, TaskMetrics};
+use crate::{
+    DistributedConfig, MaxLatencyMetric, ProducerHead, TaskCompletedDynamicFilters, TaskMetrics,
+};
 use datafusion::common::{DataFusionError, Result};
 use datafusion::execution::TaskContext;
 use datafusion::physical_plan::ExecutionPlan;
@@ -107,11 +109,15 @@ fn max_latency_metric(name: &'static str, value: &MaxLatencyMetric) -> Arc<Metri
 impl TaskData {
     pub(crate) fn plan(&self, producer_head: ProducerHead) -> Result<Arc<dyn ExecutionPlan>> {
         let result = self.final_plan.get_or_init(|| {
+            let config = DistributedConfig::from_task_context(&self.task_ctx)?;
+            config.validate_execution_options()?;
+            if !config.rewrite_producer_head_at_execution {
+                return Ok(Arc::clone(&self.base_plan));
+            }
             let producer_head =
                 producer_head.ensure_decoded(self.base_plan.schema(), &self.task_ctx)?;
 
-            Ok(producer_head
-                .insert_for_session(Arc::clone(&self.base_plan), self.task_ctx.session_config())?)
+            Ok(producer_head.insert(Arc::clone(&self.base_plan))?)
         });
         match result {
             Ok(plan) => Ok(Arc::clone(plan)),

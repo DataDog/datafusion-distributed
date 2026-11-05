@@ -100,6 +100,8 @@ impl Worker {
                 })
                 .await?;
 
+            DistributedConfig::from_session_config(session_state.config())?
+                .validate_execution_options()?;
             let task_ctx = session_state.task_ctx();
             let plan = request.plan.decode(&task_ctx)?;
 

@@ -1,4 +1,4 @@
-//! Keep an opt-in transparent envelope outside each worker's runtime producer head.
+//! Preserve opaque wrappers around statically planned worker producer heads.
 use arrow::array::Int64Array;
 use arrow::record_batch::RecordBatch;
 use arrow::util::pretty::pretty_format_batches;
@@ -9,8 +9,8 @@ use datafusion_distributed::test_utils::localhost::start_localhost_context;
 use datafusion_distributed::test_utils::session_context::register_temp_parquet_table;
 use datafusion_distributed::test_utils::stage_envelope::TestStageEnvelope;
 use datafusion_distributed::{
-    DistributedExec, DistributedExt, WorkerPlanRewriteEvent, WorkerPlanRewriteEventResponse,
-    WorkerQueryContext, register_distributed_stage_envelope,
+    DistributedConfig, DistributedExec, DistributedExt, WorkerPlanRewriteEvent,
+    WorkerPlanRewriteEventResponse, WorkerQueryContext,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -18,6 +18,9 @@ use std::time::Duration;
 #[tokio::main]
 async fn main() -> Result<()> {
     let (mut ctx, _workers, _) = start_localhost_context(2, worker_state).await;
+    let mut config = DistributedConfig::from_session_config(&ctx.copied_config())?.clone();
+    config.rewrite_producer_head_at_execution = false;
+    ctx.set_distributed_option_extension(config);
     ctx.set_distributed_metrics_collection(true)?;
     let batch =
         RecordBatch::try_from_iter([("id", Arc::new(Int64Array::from(vec![0, 1, 2, 3])) as _)])?;
@@ -53,11 +56,8 @@ async fn main() -> Result<()> {
 }
 
 async fn worker_state(ctx: WorkerQueryContext) -> Result<SessionState> {
-    let mut builder = ctx.builder;
-    register_distributed_stage_envelope::<TestStageEnvelope>(
-        builder.config().get_or_insert_default(),
-    );
-    Ok(builder
+    Ok(ctx
+        .builder
         .with_distributed_worker_plan_rewrite_handler(|event: WorkerPlanRewriteEvent<'_>| {
             Ok(WorkerPlanRewriteEventResponse::new(Arc::new(
                 TestStageEnvelope::new(event.plan, Default::default()),

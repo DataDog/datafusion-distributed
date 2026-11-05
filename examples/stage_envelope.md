@@ -1,30 +1,32 @@
-# Transparent worker-stage envelopes
+# Opaque worker-stage wrappers
 
 ```sh
 cargo run --features integration --example stage_envelope
 ```
 
-The example starts two localhost Flight workers, creates its own small Parquet input,
-and wraps decoded worker stages using the existing worker-plan rewrite hook. It reuses
-the integration fixture `TestStageEnvelope` instead of duplicating an execution-plan
-implementation. Worker-reported root metrics show that the envelope remains outside
-the runtime producer head.
+The example starts two localhost Flight workers, creates a small Parquet input, and
+wraps decoded worker stages using the existing worker-plan rewrite hook. It reuses
+`TestStageEnvelope` instead of duplicating an execution-plan implementation.
+Worker-reported root metrics show that the wrapper stays outside the producer head.
 
-Register your own unary envelope type using
-`register_distributed_stage_envelope::<MyEnvelope>(&mut config)` on both coordinator
-and worker sessions when applying wrappers after distributed planning. Registration
-is local configuration, not wire metadata. If the wrapper is serialized, its existing
-custom extension codec must also be registered on both sides. This example installs
-wrappers only after worker decoding, so it needs no codec.
+It sets `DistributedConfig::rewrite_producer_head_at_execution = false` on the
+coordinating session using the existing configuration-extension API. Configuration
+propagation carries this flag to workers. No wrapper-type registration is needed.
 
-The envelope must preserve schema, partitioning, ordering, execution properties and
-partition indices. Its child replacement must recompute those properties. Preparation
-checks unary shape, schema and partition count before and after reconstruction. It
-rebuilds the required repartition/broadcast inside registered wrappers, including
-runtime fanout changes, and inserts dynamic-planning samplers under the exchange.
-Unregistered nodes retain existing behavior; arbitrary unary operators are never
-assumed to be transparent.
+With this option disabled, the worker uses its base stage plan directly, including
+any wrapper, repartition, or broadcast head. Standard static distributed planning must
+have already built the correct producer head. Later custom transformations must
+preserve the stage's schema and output partitioning, including the required hash
+expressions, ordering, and partition count. Stale heads are not repaired.
 
-This is an execution envelope, not a generation executor. Owning the producer head
-permits future per-generation state reset, but this example does not implement reset,
-generation framing or network flush semantics.
+The default remains `true`, preserving existing runtime head insertion/removal.
+Disabling the option together with `dynamic_task_count = true` is rejected: adaptive
+planning does not know the final consumer fanout when producers start sampling.
+All participating workers must run a version supporting this option. Older workers
+ignore unknown configuration options and would still rewrite the producer head.
+
+This is a narrow opt-out from late producer-head rewriting. Task specialization,
+fresh operator instances, network binding and worker rewrite hooks still occur.
+It does not provide general plan immutability, state reset, generation framing, or
+network flush semantics. This example adds its wrapper after worker decoding and
+therefore needs no custom extension codec; serialized wrappers still need one.
