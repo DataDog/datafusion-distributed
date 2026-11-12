@@ -27,10 +27,10 @@ use crate::{
 use datafusion::common::Result;
 use datafusion::common::instant::Instant;
 use datafusion::common::tree_node::{Transformed, TreeNodeRecursion};
-use datafusion::common::{DataFusionError, internal_err};
+use datafusion::common::{DataFusionError, HashSet, internal_err};
 use datafusion::execution::TaskContext;
 use datafusion::physical_expr_common::metrics::{ExecutionPlanMetricsSet, Label, MetricBuilder};
-use datafusion::physical_plan::metrics::Count;
+use datafusion::physical_plan::metrics::{Count, Gauge};
 use datafusion::physical_plan::repartition::RepartitionExec;
 use datafusion::physical_plan::stream::RecordBatchReceiverStreamBuilder;
 use datafusion::physical_plan::{ChildrenPropertiesMode, ExecutionPlan, ReplaceChildrenOptions};
@@ -266,6 +266,7 @@ impl<'a> StageCoordinator<'a> {
         };
         self.dynamic_filter_registry
             .register_sender(task_key, coordinator_to_worker_tx.clone())?;
+        metrics.record_worker(&response.url);
 
         Ok((
             response.url,
@@ -560,6 +561,8 @@ pub(super) struct CoordinatorToWorkerMetrics {
     pub(super) remote_coordinator_channels: Count,
     pub(super) plan_send_latency: Arc<LatencyMetric>,
     pub(super) instantiation_time: usize,
+    workers: Arc<Mutex<HashSet<Url>>>,
+    num_workers: Gauge,
 }
 
 // Use a helper function instead of a closure due to a panic in the rustc compiler where it
@@ -583,7 +586,15 @@ impl CoordinatorToWorkerMetrics {
                 metrics,
             )),
             instantiation_time: now_ns(),
+            workers: Arc::new(Mutex::new(HashSet::new())),
+            num_workers: MetricBuilder::new(metrics).global_gauge("num_workers"),
         }
+    }
+
+    fn record_worker(&self, worker: &Url) {
+        let mut workers = self.workers.lock().unwrap();
+        workers.insert(worker.clone());
+        self.num_workers.set(workers.len());
     }
 }
 
