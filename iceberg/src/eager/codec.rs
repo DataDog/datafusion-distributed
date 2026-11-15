@@ -1,7 +1,7 @@
-use crate::EagerIcebergDataSource;
 use crate::IcebergFileIOCodec;
-use crate::common::scan_config::ScanConfig;
+use crate::common::reader::scan_reader;
 use crate::file_io_codec::FileIOCodec;
+use iceberg_datafusion::read::{EagerIcebergDataSource, IcebergDataSourceBuilder};
 use std::sync::Arc;
 
 use datafusion::arrow::datatypes::SchemaRef;
@@ -74,9 +74,32 @@ impl PhysicalExtensionCodec for EagerIcebergCodec {
         let source = pb::AssignedScan::decode(buf).map_err(|error| {
             proto_error(format!("failed to decode EagerIcebergDataSource: {error}"))
         })?;
-        let scan = self.decode_config(source.config, ctx, proto_converter)?;
-        if source.partitions.is_empty()
-            || source.partitions.len() != scan.partitioning.partition_count()
+        let config = source
+            .config
+            .ok_or_else(|| proto_error("Missing Iceberg scan config"))?;
+        let schema = config
+            .schema
+            .ok_or_else(|| proto_error("EagerIcebergDataSource is missing its schema"))?;
+        let schema = SchemaRef::new((&schema).try_into()?);
+        let decode_ctx = PhysicalPlanDecodeContext::new(ctx, self);
+        let partitioning = parse_protobuf_partitioning(
+            config.partitioning.as_ref(),
+            &decode_ctx,
+            &schema,
+            proto_converter,
+        )?
+        .ok_or_else(|| proto_error("EagerIcebergDataSource is missing its partitioning"))?;
+        let fetch = config
+            .fetch
+            .map(usize::try_from)
+            .transpose()
+            .map_err(|_| proto_error("Iceberg fetch limit does not fit in usize"))?;
+        let file_io = self.file_io_codec.decode(
+            config.storage_properties,
+            config.custom_file_io.as_deref(),
+            ctx,
+        )?;
+        if source.partitions.is_empty() || source.partitions.len() != partitioning.partition_count()
         {
             return internal_err!("Iceberg assigned files do not match scan partitioning");
         }
@@ -95,15 +118,11 @@ impl PhysicalExtensionCodec for EagerIcebergCodec {
                     .collect::<Result<Vec<_>>>()
             })
             .collect::<Result<Vec<_>>>()?;
+        let reader = scan_reader(file_io.clone(), self.iceberg_runtime.clone(), ctx);
         Ok(DataSourceExec::from_data_source(
-            EagerIcebergDataSource::from_file_groups(
-                scan.schema,
-                groups,
-                scan.iceberg_file_io,
-                scan.iceberg_runtime,
-                scan.fetch,
-                ctx,
-            )?,
+            IcebergDataSourceBuilder::from_planned_files(schema, groups, file_io, reader)
+                .with_fetch(fetch)
+                .build_planned(ctx)?,
         ))
     }
 
@@ -125,7 +144,7 @@ impl PhysicalExtensionCodec for EagerIcebergCodec {
         let partitions = (0..source.output_partitioning().partition_count())
             .map(|partition| {
                 let tasks = source
-                    .planned_partition_tasks(partition)?
+                    .planned_partition_files(partition)?
                     .map(|file| {
                         rmp_serde::to_vec_named(file).map_err(|error| {
                             exec_datafusion_err!("Cannot encode assigned Iceberg file: {error}")
@@ -146,45 +165,6 @@ impl PhysicalExtensionCodec for EagerIcebergCodec {
 }
 
 impl EagerIcebergCodec {
-    fn decode_config(
-        &self,
-        proto: Option<pb::ScanConfig>,
-        ctx: &TaskContext,
-        proto_converter: &dyn PhysicalProtoConverterExtension,
-    ) -> Result<ScanConfig> {
-        let proto = proto.ok_or_else(|| proto_error("Missing Iceberg scan config"))?;
-        let schema = proto
-            .schema
-            .ok_or_else(|| proto_error("EagerIcebergDataSource is missing its schema"))?;
-        let schema = SchemaRef::new((&schema).try_into()?);
-        let decode_ctx = PhysicalPlanDecodeContext::new(ctx, self);
-        let partitioning = parse_protobuf_partitioning(
-            proto.partitioning.as_ref(),
-            &decode_ctx,
-            &schema,
-            proto_converter,
-        )?
-        .ok_or_else(|| proto_error("EagerIcebergDataSource is missing its partitioning"))?;
-        let fetch = proto
-            .fetch
-            .map(usize::try_from)
-            .transpose()
-            .map_err(|_| proto_error("Iceberg fetch limit does not fit in usize"))?;
-        let iceberg_file_io = self.file_io_codec.decode(
-            proto.storage_properties,
-            proto.custom_file_io.as_deref(),
-            ctx,
-        )?;
-        Ok(ScanConfig::new(
-            schema,
-            partitioning,
-            fetch,
-            iceberg_file_io,
-            self.iceberg_runtime.clone(),
-            ctx,
-        ))
-    }
-
     fn encode_config(
         &self,
         source: &EagerIcebergDataSource,
@@ -209,29 +189,20 @@ impl EagerIcebergCodec {
 
 #[cfg(test)]
 mod tests {
-    use datafusion::prelude::SessionConfig;
-    use datafusion_distributed_iceberg_test_tools::create_taxi_table;
+    use datafusion_distributed_iceberg_test_tools::{IcebergTestHarness, create_taxi_table};
 
     use super::*;
-    use crate::IcebergConfig;
-    use crate::table_provider::scan::plan_scan;
+    use crate::IcebergExt;
 
     #[tokio::test]
     async fn rejects_missing_config_and_invalid_assigned_groups() -> Result<()> {
-        let taxi = create_taxi_table().await?;
-        let config = IcebergConfig {
-            eager_file_planning: true,
-            ..Default::default()
-        };
-        let task_ctx = TaskContext::default()
-            .with_session_config(SessionConfig::new().with_option_extension(config));
-        let plan = plan_scan(
-            taxi.table().clone(),
-            taxi.schema()?,
-            Default::default(),
-            Arc::new(task_ctx),
-        )
-        .await?;
+        let harness = IcebergTestHarness::builder()
+            .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
+            .with_config_option("iceberg.execution.eager_file_planning", true)
+            .with_table(create_taxi_table().await?)
+            .build()
+            .await?;
+        let plan = harness.scan().await?;
         let exec = plan.downcast_ref::<DataSourceExec>().unwrap();
         let source = exec
             .data_source()

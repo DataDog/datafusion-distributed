@@ -4,14 +4,14 @@ use std::collections::BinaryHeap;
 use datafusion::common::{Result, exec_err};
 use iceberg::scan::FileScanTask;
 
-/// Assign largest files to the least-loaded task, then cycle its local partitions.
-/// File identity breaks size ties independently of manifest discovery order.
-/// Returned positions refer to the supplied file iterator, not private source storage.
+/// Assign largest files to the least-loaded distributed task, cycling its local
+/// partitions. File identity breaks size ties independently of discovery order.
+/// The upstream source executes these explicit groups without regrouping them.
 pub(crate) fn assign_files<'a>(
     files: impl Iterator<Item = &'a FileScanTask>,
     task_count: usize,
     partitions_per_task: usize,
-) -> Result<Vec<Vec<Vec<usize>>>> {
+) -> Result<Vec<Vec<Vec<FileScanTask>>>> {
     if task_count
         .checked_mul(partitions_per_task)
         .is_none_or(|count| count == 0)
@@ -33,13 +33,13 @@ pub(crate) fn assign_files<'a>(
     let mut loads: BinaryHeap<_> = (0..task_count)
         .map(|task| Reverse((0_u128, 0_usize, task)))
         .collect();
-    let mut groups = vec![vec![Vec::new(); partitions_per_task]; task_count];
+    let mut assignments = vec![vec![Vec::new(); partitions_per_task]; task_count];
     for index in indices {
         let mut least_loaded = loads.peek_mut().expect("validated nonzero task count");
         let Reverse((bytes, count, task)) = &mut *least_loaded;
-        groups[*task][*count % partitions_per_task].push(index);
+        assignments[*task][*count % partitions_per_task].push(files[index].clone());
         *bytes += u128::from(files[index].length());
         *count += 1;
     }
-    Ok(groups)
+    Ok(assignments)
 }

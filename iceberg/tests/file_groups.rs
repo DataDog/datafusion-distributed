@@ -11,15 +11,16 @@ mod tests {
     use datafusion::execution::TaskContext;
     use datafusion::physical_plan::collect;
     use datafusion::prelude::SessionContext;
-    use datafusion_distributed_iceberg::{EagerIcebergDataSource, iceberg};
     use datafusion_distributed_iceberg_test_tools::create_taxi_table;
+    use iceberg::arrow::ArrowReaderBuilder;
+    use iceberg_datafusion::read::{EagerIcebergDataSource, IcebergDataSourceBuilder};
 
     #[tokio::test]
     async fn regrouping_a_subset_reads_the_selected_dates() -> Result<()> {
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .build()
             .await?;
         let plan = harness.scan().await?;
@@ -29,18 +30,27 @@ mod tests {
             .data_source()
             .downcast_ref::<EagerIcebergDataSource>()
             .unwrap();
-        let subset = source.with_file_groups(vec![vec![1, 4], vec![5]])?;
-        let regrouped = subset.with_file_groups(vec![vec![0, 2], vec![], vec![1]])?;
+        let files: Vec<_> = source.planned_files().cloned().collect();
+        let subset = source.with_planned_files(vec![
+            vec![files[1].clone(), files[4].clone()],
+            vec![files[5].clone()],
+        ])?;
+        let files: Vec<_> = subset.planned_files().cloned().collect();
+        let regrouped = subset.with_planned_files(vec![
+            vec![files[0].clone(), files[2].clone()],
+            vec![],
+            vec![files[1].clone()],
+        ])?;
         insta::assert_snapshot!(execute_groups(regrouped).await?);
         Ok(())
     }
 
     #[tokio::test]
-    async fn rejects_invalid_groups_in_the_visible_file_set() -> Result<()> {
+    async fn rejects_zero_groups_but_accepts_empty_partitions() -> Result<()> {
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .build()
             .await?;
         let plan = harness.scan().await?;
@@ -50,20 +60,11 @@ mod tests {
             .data_source()
             .downcast_ref::<EagerIcebergDataSource>()
             .unwrap();
-        let subset = source.with_file_groups(vec![vec![1, 4], vec![5]])?;
         assert!(
-            subset.with_file_groups(vec![]).is_err(),
+            source.with_planned_files(vec![]).is_err(),
             "no partition groups"
         );
-        assert!(
-            subset.with_file_groups(vec![vec![3]]).is_err(),
-            "position outside the three-file subset"
-        );
-        assert!(
-            subset.with_file_groups(vec![vec![0], vec![0]]).is_err(),
-            "position repeated across partitions"
-        );
-        let empty = subset.with_file_groups(vec![vec![]])?;
+        let empty = source.with_planned_files(vec![vec![]])?;
         assert_eq!(empty.planned_files().len(), 0);
         assert_eq!(empty.output_partitioning().partition_count(), 1);
         Ok(())
@@ -74,7 +75,7 @@ mod tests {
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .build()
             .await?;
         let plan = harness.scan().await?;
@@ -84,29 +85,32 @@ mod tests {
             .data_source()
             .downcast_ref::<EagerIcebergDataSource>()
             .unwrap();
-        let selected = source.with_file_groups(vec![vec![5, 1], vec![4]])?;
+        let files: Vec<_> = source.planned_files().cloned().collect();
+        let selected = source.with_planned_files(vec![
+            vec![files[5].clone(), files[1].clone()],
+            vec![files[4].clone()],
+        ])?;
         let groups = (0..2)
-            .map(|p| Ok(selected.planned_partition_tasks(p)?.cloned().collect()))
+            .map(|p| Ok(selected.planned_partition_files(p)?.cloned().collect()))
             .collect::<Result<Vec<_>>>()?;
         let context = TaskContext::default();
-        let restored = EagerIcebergDataSource::from_file_groups(
+        let restored = IcebergDataSourceBuilder::from_planned_files(
             Arc::clone(source.schema()),
             groups,
             source.file_io().clone(),
-            iceberg::Runtime::current(),
-            None,
-            &context,
-        )?;
+            ArrowReaderBuilder::new(source.file_io().clone(), iceberg::Runtime::current()).build(),
+        )
+        .build_planned(&context)?;
         insta::assert_snapshot!(execute_groups(restored).await?);
         Ok(())
     }
 
     #[tokio::test]
-    async fn subsets_keep_the_reservation_until_the_last_source_is_dropped() -> Result<()> {
+    async fn replacement_assignments_have_independent_reservations() -> Result<()> {
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .build()
             .await?;
         let plan = harness.scan().await?;
@@ -117,20 +121,21 @@ mod tests {
             .downcast_ref::<EagerIcebergDataSource>()
             .unwrap();
         let context = TaskContext::default();
-        let retained = EagerIcebergDataSource::from_file_groups(
+        let retained = IcebergDataSourceBuilder::from_planned_files(
             Arc::clone(source.schema()),
             vec![source.planned_files().cloned().collect()],
             source.file_io().clone(),
-            iceberg::Runtime::current(),
-            None,
-            &context,
-        )?;
+            ArrowReaderBuilder::new(source.file_io().clone(), iceberg::Runtime::current()).build(),
+        )
+        .build_planned(&context)?;
         let reserved = context.memory_pool().reserved();
         assert!(reserved > 0);
-        let subset = retained.with_file_groups(vec![vec![0]])?;
-        assert_eq!(context.memory_pool().reserved(), reserved);
+        let subset = retained
+            .with_planned_files(vec![vec![retained.planned_files().next().unwrap().clone()]])?;
+        let subset_reserved = context.memory_pool().reserved() - reserved;
+        assert!(subset_reserved > 0);
         drop(retained);
-        assert_eq!(context.memory_pool().reserved(), reserved);
+        assert_eq!(context.memory_pool().reserved(), subset_reserved);
         drop(subset);
         assert_eq!(context.memory_pool().reserved(), 0);
         Ok(())
@@ -152,7 +157,7 @@ mod tests {
         let mut lines = Vec::new();
         for partition in 0..source.output_partitioning().partition_count() {
             let files = source
-                .planned_partition_tasks(partition)?
+                .planned_partition_files(partition)?
                 .map(|file| data_file_name(file.data_file_path()).to_owned())
                 .collect::<Vec<_>>();
             lines.push(format!("Partition {partition}: [{}]", files.join(", ")));

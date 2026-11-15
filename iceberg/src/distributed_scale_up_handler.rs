@@ -7,12 +7,12 @@ use datafusion_distributed::{
     DistributedLeafExec, ScaleUpLeafNodeEvent, ScaleUpLeafNodeEventResponse,
 };
 
-use crate::EagerIcebergDataSource;
 use crate::eager::assign_files;
+use iceberg_datafusion::read::EagerIcebergDataSource;
 
 /// Like DFD's FileScanConfig scale-up handler, build one scan variant per task
-/// before routing. This handler chooses task assignments; each source retains
-/// the resulting local groups for routing, transport, and execution.
+/// before routing. This handler chooses each task's byte-balanced file assignment
+/// and local groups; upstream preserves them for routing, transport, and execution.
 pub(crate) fn iceberg_scale_up(
     ev: ScaleUpLeafNodeEvent,
 ) -> Option<Result<ScaleUpLeafNodeEventResponse>> {
@@ -24,11 +24,14 @@ pub(crate) fn iceberg_scale_up(
         return None;
     }
     Some((|| {
-        let partitions_per_task = source.output_partitioning().partition_count();
-        let assignments = assign_files(source.planned_files(), ev.task_count, partitions_per_task)?;
+        let assignments = assign_files(
+            source.planned_files(),
+            ev.task_count,
+            source.output_partitioning().partition_count(),
+        )?;
         let sources = assignments
             .into_iter()
-            .map(|groups| source.with_file_groups(groups))
+            .map(|groups| source.with_planned_files(groups))
             .collect::<Result<Vec<_>>>()?;
         let variants = sources
             .into_iter()

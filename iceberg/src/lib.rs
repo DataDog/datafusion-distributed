@@ -1,11 +1,11 @@
-//! Read-only Apache Iceberg integration for DataFusion Distributed.
+//! Distributed Iceberg scan assignment and work delivery for upstream providers.
 //!
-//! This crate ports the read path from Apache Iceberg Rust's DataFusion
-//! integration, with distributed scan assignment and work delivery. It contains
-//! no production Iceberg write or commit implementation.
+//! Use `iceberg_datafusion` table providers directly. This crate installs their
+//! scan-construction hook, distributed task delivery, and worker codecs. Upstream
+//! catalog writes remain available without distributed planning; distributing
+//! Iceberg write/commit operators is not supported.
 
 mod common;
-mod config;
 mod distributed_desired_task_count_handler;
 mod distributed_scale_up_handler;
 mod eager;
@@ -13,21 +13,16 @@ mod file_io_codec;
 mod iceberg_ext;
 mod lazy;
 mod proto;
-mod table_provider;
+mod scan_factory;
 
-pub use config::IcebergConfig;
 pub use distributed_desired_task_count_handler::iceberg_desired_task_count;
 pub use eager::EagerIcebergCodec;
-pub use eager::EagerIcebergDataSource;
 pub use file_io_codec::IcebergFileIOCodec;
 pub use iceberg_ext::IcebergExt;
 pub use iceberg_ext::IcebergIntegrationOptions;
+pub use lazy::FeedTaskSource;
 pub use lazy::IcebergWorkUnitFeed;
 pub use lazy::LazyIcebergCodec;
-pub use lazy::LazyIcebergDataSource;
-pub use table_provider::IcebergCatalogTableProvider;
-pub use table_provider::IcebergStaticTableProvider;
-pub use table_provider::IcebergTableProviderFactory;
 
 // re-export of iceberg-rust.
 pub use iceberg;

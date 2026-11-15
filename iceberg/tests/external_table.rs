@@ -52,7 +52,7 @@ mod tests {
             .unwrap_err();
 
         insta::assert_snapshot!(error.to_string(), @r"
-    Error during planning: Currently we only support reading existing icebergs tables in external table command. To create new table, please use catalog provider.
+    This feature is not implemented: Currently we only support reading existing icebergs tables in external table command. To create new table, please use catalog provider.
     ");
 
         Ok(())

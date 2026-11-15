@@ -1,25 +1,32 @@
 use std::num::NonZeroUsize;
 
-use datafusion::common::{Result, config_datafusion_err};
+use datafusion::common::{Result, config_datafusion_err, not_impl_err};
 use datafusion::datasource::source::DataSourceExec;
 use datafusion_distributed::{
     DesiredTaskCountEvent, DesiredTaskCountEventResponse, DistributedConfig,
 };
+use iceberg_datafusion::read::{EagerIcebergDataSource, IcebergDataSource};
+use iceberg_datafusion::write::{IcebergCommitExec, IcebergWriteExec};
 
-use crate::{EagerIcebergDataSource, LazyIcebergDataSource};
+use crate::FeedTaskSource;
 
 /// Estimates scan parallelism from selected file bytes, bounded by available file work.
 /// Lazy scans continue to use snapshot totals.
 pub fn iceberg_desired_task_count(
     ev: DesiredTaskCountEvent,
 ) -> Option<Result<DesiredTaskCountEventResponse>> {
-    let node = ev.plan.downcast_ref::<DataSourceExec>()?.data_source();
-    if !node.is::<LazyIcebergDataSource>() && !node.is::<EagerIcebergDataSource>() {
-        return None;
+    if ev.plan.is::<IcebergWriteExec>() || ev.plan.is::<IcebergCommitExec>() {
+        return Some(not_impl_err!(
+            "Distributed Iceberg writes are not supported; use an upstream catalog provider in a session without the distributed planner"
+        ));
     }
-    let statistics = match node.partition_statistics(None) {
-        Ok(statistics) => statistics,
-        Err(error) => return Some(Err(error)),
+    let node = ev.plan.downcast_ref::<DataSourceExec>()?.data_source();
+    // A reader limit changes output estimates, not the selected file work.
+    let statistics = if let Some(source) = node.downcast_ref::<EagerIcebergDataSource>() {
+        source.unlimited_statistics()
+    } else {
+        node.downcast_ref::<IcebergDataSource<FeedTaskSource>>()?
+            .unlimited_statistics()
     };
     let total_bytes = *statistics.total_byte_size.get_value()?;
     let config = DistributedConfig::from_session_config(ev.session_config).ok()?;

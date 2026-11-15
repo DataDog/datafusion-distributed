@@ -54,7 +54,7 @@ mod tests {
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .with_metadata(metadata_without_summary_statistics)
             .build()
             .await?;
@@ -78,8 +78,8 @@ mod tests {
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
             .with_table_option("iceberg.snapshot_id", "1")
-            .with_config_option("iceberg.eager_file_planning", true)
-            .with_config_option("iceberg.column_stats_enabled", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
+            .with_config_option("iceberg.execution.column_stats_enabled", true)
             .build()
             .await?;
         // The manifest's partition summary excludes this query. Delete the manifest
@@ -136,7 +136,7 @@ mod tests {
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(table)
             .with_table_option("iceberg.snapshot_id", "2")
-            .with_config_option("iceberg.column_stats_enabled", true)
+            .with_config_option("iceberg.execution.column_stats_enabled", true)
             .build()
             .await?;
         let stats = query_statistics(&harness, "SELECT * FROM metrics").await?;
@@ -188,7 +188,7 @@ mod tests {
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(table)
             .with_table_option("iceberg.snapshot_id", "2")
-            .with_config_option("iceberg.column_stats_enabled", true)
+            .with_config_option("iceberg.execution.column_stats_enabled", true)
             .build()
             .await?;
         let stats = query_statistics(
@@ -304,7 +304,7 @@ mod tests {
         let (plan, batches) = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
-            .with_config_option("iceberg.column_stats_enabled", true)
+            .with_config_option("iceberg.execution.column_stats_enabled", true)
             .query("SELECT count(*) FROM taxi")
             .await?;
 
@@ -365,6 +365,7 @@ mod tests {
                 additional_properties: [
                     ("total-records".to_string(), "42".to_string()),
                     ("total-files-size".to_string(), "4242".to_string()),
+                    ("total-delete-files".to_string(), "0".to_string()),
                 ]
                 .into_iter()
                 .collect(),

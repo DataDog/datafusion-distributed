@@ -42,7 +42,7 @@ mod tests {
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
             .with_workers(workers)
-            .with_config_option("iceberg.eager_file_planning", eager_file_planning)
+            .with_config_option("iceberg.execution.eager_file_planning", eager_file_planning)
             .configure_session(|mut state| {
                 let session = state.config().get_or_insert_default();
                 session.options_mut().execution.target_partitions = partitions;

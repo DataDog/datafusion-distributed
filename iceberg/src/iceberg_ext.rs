@@ -6,20 +6,28 @@ use datafusion::prelude::{SessionConfig, SessionContext};
 use datafusion_distributed::DistributedExt;
 use delegate::delegate;
 use iceberg::io::StorageFactory;
+use iceberg_datafusion::read::{IcebergDataSource, set_iceberg_scan_factory};
+use iceberg_datafusion::{
+    IcebergDataFusionConfig, IcebergExecutionConfig, IcebergTableProviderFactory,
+};
 use iceberg_storage_opendal::OpenDalResolvingStorageFactory;
 
+use crate::FeedTaskSource;
 use crate::LazyIcebergCodec;
 use crate::distributed_desired_task_count_handler::iceberg_desired_task_count;
 use crate::distributed_scale_up_handler::iceberg_scale_up;
+use crate::scan_factory::DistributedIcebergScanFactory;
 use crate::{EagerIcebergCodec, IcebergFileIOCodec};
-use crate::{IcebergConfig, IcebergTableProviderFactory, LazyIcebergDataSource};
 
 /// Configuration required to register the Iceberg SQL integration.
 #[derive(Clone)]
 pub struct IcebergIntegrationOptions {
     /// Builds storage implementations for table metadata and data files.
     pub storage_factory: Arc<dyn StorageFactory>,
-    /// Executes Iceberg IO-bound and CPU-bound work.
+    /// Default scan runtime for eager collection and reader delete loading.
+    /// Ordinary data-file reads are polled by the stream consumer; table/cache
+    /// runtimes are not rebound. Explicit provider overrides win on the coordinator,
+    /// while workers reconstruct readers with their own integration options.
     ///
     /// Construct this from the application's Tokio runtime with
     /// [`iceberg::Runtime::new`] or [`iceberg::Runtime::new_with_split`].
@@ -96,25 +104,36 @@ impl IcebergConfigExt for SessionConfig {
     }
 }
 
-fn iceberg_config_mut(config: &mut SessionConfig) -> &mut IcebergConfig {
-    if config.options().extensions.get::<IcebergConfig>().is_none() {
+fn iceberg_config_mut(config: &mut SessionConfig) -> &mut IcebergExecutionConfig {
+    if config
+        .options()
+        .extensions
+        .get::<IcebergDataFusionConfig>()
+        .is_none()
+    {
         config
             .options_mut()
             .extensions
-            .insert(IcebergConfig::default());
+            .insert(IcebergDataFusionConfig::default());
     }
-
-    config
+    &mut config
         .options_mut()
         .extensions
-        .get_mut::<IcebergConfig>()
-        .expect("IcebergConfig was inserted above")
+        .get_mut::<IcebergDataFusionConfig>()
+        .expect("IcebergDataFusionConfig was inserted above")
+        .execution
 }
 
 const TABLE_FACTORY_IDENTIFIER: &str = "ICEBERG";
 
 fn set_iceberg_integration(state: &mut SessionState, options: IcebergIntegrationOptions) {
     iceberg_config_mut(state.config_mut());
+    set_iceberg_scan_factory(
+        state.config_mut(),
+        Arc::new(DistributedIcebergScanFactory {
+            runtime: options.iceberg_runtime.clone(),
+        }),
+    );
     let lazy = LazyIcebergCodec::new(
         Arc::clone(&options.storage_factory),
         options.iceberg_runtime.clone(),
@@ -132,18 +151,18 @@ fn set_iceberg_integration(state: &mut SessionState, options: IcebergIntegration
     };
     state.table_factories_mut().insert(
         TABLE_FACTORY_IDENTIFIER.to_string(),
-        Arc::new(IcebergTableProviderFactory::new_with_runtime(
-            options.storage_factory,
-            options.iceberg_runtime,
-        )),
+        Arc::new(
+            IcebergTableProviderFactory::new_with_storage_factory(options.storage_factory)
+                .with_runtime(options.iceberg_runtime),
+        ),
     );
     state.set_distributed_desired_task_count_handler(iceberg_desired_task_count);
     // Eager sources specialize their file groups; only lazy sources register feeds.
     state.set_distributed_scale_up_leaf_node_handler(iceberg_scale_up);
     state.set_distributed_work_unit_feed(|plan: &DataSourceExec| {
         plan.data_source()
-            .downcast_ref::<LazyIcebergDataSource>()
-            .map(LazyIcebergDataSource::feed)
+            .downcast_ref::<IcebergDataSource<FeedTaskSource>>()
+            .map(|source| source.task_source().feed())
     });
     state.set_distributed_user_codec(lazy);
     state.set_distributed_user_codec(eager);
@@ -152,6 +171,12 @@ fn set_iceberg_integration(state: &mut SessionState, options: IcebergIntegration
 impl IcebergExt for SessionStateBuilder {
     fn set_iceberg_integration(&mut self, options: IcebergIntegrationOptions) {
         iceberg_config_mut(self.config().get_or_insert_default());
+        set_iceberg_scan_factory(
+            self.config().get_or_insert_default(),
+            Arc::new(DistributedIcebergScanFactory {
+                runtime: options.iceberg_runtime.clone(),
+            }),
+        );
         let lazy = LazyIcebergCodec::new(
             Arc::clone(&options.storage_factory),
             options.iceberg_runtime.clone(),
@@ -169,18 +194,18 @@ impl IcebergExt for SessionStateBuilder {
         };
         self.table_factories().get_or_insert_default().insert(
             TABLE_FACTORY_IDENTIFIER.to_string(),
-            Arc::new(IcebergTableProviderFactory::new_with_runtime(
-                options.storage_factory,
-                options.iceberg_runtime,
-            )),
+            Arc::new(
+                IcebergTableProviderFactory::new_with_storage_factory(options.storage_factory)
+                    .with_runtime(options.iceberg_runtime),
+            ),
         );
         self.set_distributed_desired_task_count_handler(iceberg_desired_task_count);
         // Same hooks as SessionState, registered before the builder creates the state.
         self.set_distributed_scale_up_leaf_node_handler(iceberg_scale_up);
         self.set_distributed_work_unit_feed(|plan: &DataSourceExec| {
             plan.data_source()
-                .downcast_ref::<LazyIcebergDataSource>()
-                .map(LazyIcebergDataSource::feed)
+                .downcast_ref::<IcebergDataSource<FeedTaskSource>>()
+                .map(|source| source.task_source().feed())
         });
         self.set_distributed_user_codec(lazy);
         self.set_distributed_user_codec(eager);

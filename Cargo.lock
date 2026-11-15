@@ -4082,7 +4082,7 @@ dependencies = [
 [[package]]
 name = "iceberg-datafusion"
 version = "0.12.0"
-source = "git+https://github.com/apache/datafusion-iceberg.git?rev=20327db58c7a44330366da00a34a26e866d0da4d#20327db58c7a44330366da00a34a26e866d0da4d"
+source = "git+https://github.com/apache/datafusion-iceberg.git?rev=13d599ea411e5c1be14c9d454d944a73cfeaa108#13d599ea411e5c1be14c9d454d944a73cfeaa108"
 dependencies = [
  "async-trait",
  "bytes",

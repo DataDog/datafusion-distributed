@@ -3,7 +3,7 @@ name = "datafusion-distributed-iceberg"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.95.0"
-description = "Read-only Apache Iceberg table providers for DataFusion Distributed"
+description = "Distributed Apache Iceberg scan integration for DataFusion"
 license = "Apache-2.0"
 repository = "https://github.com/datafusion-contrib/datafusion-distributed"
 
@@ -13,7 +13,8 @@ bytes = "1"
 datafusion = { workspace = true, features = ["sql"] }
 datafusion-proto = { workspace = true }
 # Match datafusion-iceberg's iceberg-rust revision so FileScanTask has one shared type.
-iceberg-datafusion = { git = "https://github.com/apache/datafusion-iceberg.git", rev = "20327db58c7a44330366da00a34a26e866d0da4d" }
+# WIP: this pin needs unpublished upstream extensions; see README.md before building.
+iceberg-datafusion = { git = "https://github.com/apache/datafusion-iceberg.git", rev = "13d599ea411e5c1be14c9d454d944a73cfeaa108" }
 futures = "0.3"
 iceberg = { git = "https://github.com/apache/iceberg-rust", rev = "5b82ab99aeaf50bf4f5b3b776ac9cd6380a5f3e3" }
 iceberg-storage-opendal = { git = "https://github.com/apache/iceberg-rust", rev = "5b82ab99aeaf50bf4f5b3b776ac9cd6380a5f3e3", default-features = false, features = ["opendal-fs", "opendal-s3", "opendal-gcs"] }

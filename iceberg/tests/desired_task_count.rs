@@ -1,15 +1,15 @@
 mod tests {
-    use datafusion::common::Result;
     use datafusion::common::tree_node::{TreeNode, TreeNodeRecursion};
+    use datafusion::common::{Result, stats::Precision};
     use datafusion::datasource::source::DataSourceExec;
     use datafusion_distributed::DesiredTaskCountEvent;
     use datafusion_distributed::DistributedExt;
-    use datafusion_distributed_iceberg::EagerIcebergDataSource;
     use datafusion_distributed_iceberg::IcebergExt;
     use datafusion_distributed_iceberg::iceberg_desired_task_count;
     use datafusion_distributed_iceberg_test_tools::create_taxi_table;
     use datafusion_distributed_iceberg_test_tools::{IcebergTestHarness, without_snapshots};
     use iceberg::spec::{MAIN_BRANCH, Snapshot, TableMetadata};
+    use iceberg_datafusion::read::EagerIcebergDataSource;
 
     #[tokio::test]
     async fn executes_with_estimated_scan_tasks() -> Result<()> {
@@ -65,7 +65,7 @@ mod tests {
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .configure_session(|mut state| {
                 let session = state.config().get_or_insert_default();
                 session.options_mut().execution.target_partitions = 2;
@@ -102,6 +102,93 @@ mod tests {
             Ok(TreeNodeRecursion::Continue)
         })?;
         assert_eq!(estimates, vec![Some(1)]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn limited_lazy_scan_sizes_tasks_from_unlimited_snapshot_bytes() -> Result<()> {
+        let harness = IcebergTestHarness::builder()
+            .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
+            .with_table(create_taxi_table().await?)
+            .configure_session(|mut state| {
+                let config = state.config().get_or_insert_default();
+                config.options_mut().execution.target_partitions = 2;
+                state.with_distributed_file_scan_config_bytes_per_partition(1_000_000)
+            })?
+            .build()
+            .await?;
+        let scan = harness
+            .context()
+            .table_provider("taxi")
+            .await?
+            .scan(&harness.state(), None, &[], Some(2))
+            .await?;
+        let source = scan.downcast_ref::<DataSourceExec>().unwrap().data_source();
+        assert_eq!(
+            source.partition_statistics(None)?.num_rows,
+            Precision::Inexact(4)
+        );
+        assert_eq!(
+            iceberg_desired_task_count(DesiredTaskCountEvent {
+                plan: &scan,
+                session_config: harness.state().config(),
+            })
+            .transpose()?
+            .map(|response| response.task_count.as_usize()),
+            Some(3)
+        );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn limited_eager_scan_preserves_unlimited_file_work_estimates() -> Result<()> {
+        let harness = IcebergTestHarness::builder()
+            .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
+            .with_table(create_taxi_table().await?)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
+            .configure_session(|mut state| {
+                let config = state.config().get_or_insert_default();
+                config.options_mut().execution.target_partitions = 2;
+                state.with_distributed_file_scan_config_bytes_per_partition(1_000_000)
+            })?
+            .build()
+            .await?;
+        let scan = harness
+            .context()
+            .table_provider("taxi")
+            .await?
+            .scan(&harness.state(), None, &[], Some(2))
+            .await?;
+        let source = scan
+            .downcast_ref::<DataSourceExec>()
+            .unwrap()
+            .data_source()
+            .downcast_ref::<EagerIcebergDataSource>()
+            .unwrap();
+        // The provider returns the upstream source without regrouping. Task
+        // sizing must still use file-work estimates rather than limited output.
+        assert_eq!(
+            source.unlimited_statistics().num_rows,
+            Precision::Exact(175_000)
+        );
+        assert_eq!(
+            source.unlimited_statistics().total_byte_size,
+            Precision::Exact(5_656_412)
+        );
+        let output = scan.downcast_ref::<DataSourceExec>().unwrap().data_source();
+        assert_eq!(
+            output.partition_statistics(None)?.num_rows,
+            Precision::Inexact(4)
+        );
+        assert_eq!(
+            iceberg_desired_task_count(DesiredTaskCountEvent {
+                plan: &scan,
+                session_config: harness.state().config(),
+            })
+            .transpose()?
+            .map(|response| response.task_count.as_usize()),
+            Some(3)
+        );
         Ok(())
     }
 

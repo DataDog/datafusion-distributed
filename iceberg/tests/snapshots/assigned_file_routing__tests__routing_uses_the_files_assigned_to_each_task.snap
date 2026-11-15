@@ -16,9 +16,9 @@ expression: "format!(\"{plan}\\n{}\\n{rows}\", routes.take())"
     │ RepartitionExec: partitioning=Hash([pickup_date@0], 12), input_partitions=4
     │   AggregateExec: mode=Partial, gby=[pickup_date@0 as pickup_date], aggr=[count(Int64(1))]
     │     DistributedLeafExec:
-    │       t0: DataSourceExec: format=iceberg, planned_files=3
-    │       t1: DataSourceExec: format=iceberg, planned_files=2
-    │       t2: DataSourceExec: format=iceberg, planned_files=2
+    │       t0: DataSourceExec: format=iceberg, projection=[pickup_date], planned_files=3
+    │       t1: DataSourceExec: format=iceberg, projection=[pickup_date], planned_files=2
+    │       t2: DataSourceExec: format=iceberg, projection=[pickup_date], planned_files=2
     └──────────────────────────────────────────────────
 
 Task 0 -> http://url-0/

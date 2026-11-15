@@ -10,8 +10,8 @@ use datafusion::physical_expr::Partitioning;
 use datafusion_distributed::{DistributedWorkUnitFeedContext, WorkUnitFeedProvider};
 use futures::StreamExt;
 use futures::stream::BoxStream;
-use iceberg::expr::Predicate;
 use iceberg::scan::FileScanTask;
+use iceberg_datafusion::read::{FileScanTaskSource, TableScanTaskSource};
 use prost::encoding::{DecodeContext, WireType};
 use prost::{DecodeError, Message};
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -169,14 +169,10 @@ impl Message for FileScanTaskWorkUnit {
 ///   coordinator to workers.
 #[derive(Debug)]
 pub struct IcebergWorkUnitFeed {
-    /// A table in the catalog.
-    pub(crate) iceberg_table: iceberg::table::Table,
-    /// Snapshot of the table to scan.
-    pub(crate) snapshot_id: Option<i64>,
-    /// Projection column names, None means all columns.
-    pub(crate) projection: Option<Vec<String>>,
-    /// Filters to apply to the table scan.
-    pub(crate) predicates: Option<Predicate>,
+    /// Upstream owns the immutable snapshot, projection and predicate request.
+    pub(crate) source: TableScanTaskSource,
+    /// Whether a projection was explicitly requested (for explain output).
+    pub(crate) projected: bool,
     /// Partitioning scheme to which the feeds should adhere.
     /// TODO: Today, only Partitioning::UnknownPartitioning partitioning is supported.
     ///  Ideally, both Range partitioning and hash partitioning should be supported.
@@ -189,10 +185,8 @@ pub struct IcebergWorkUnitFeed {
 impl Clone for IcebergWorkUnitFeed {
     fn clone(&self) -> Self {
         Self {
-            iceberg_table: self.iceberg_table.clone(),
-            snapshot_id: self.snapshot_id,
-            projection: self.projection.clone(),
-            predicates: self.predicates.clone(),
+            source: self.source.clone(),
+            projected: self.projected,
             partitioning: self.partitioning.clone(),
             sync_manager: Default::default(),
         }
@@ -221,20 +215,8 @@ impl WorkUnitFeedProvider for IcebergWorkUnitFeed {
         // Only the first IcebergWorkUnitFeed::feed call will get to execute it, and the
         // rest will just observe the already initialized result.
         let sync_manager_or_err = self.sync_manager.get_or_init(|| {
-            // Start the table scan only once for all the .feed() calls.
-            let scan_builder = match self.snapshot_id {
-                Some(snapshot_id) => self.iceberg_table.scan().snapshot_id(snapshot_id),
-                None => self.iceberg_table.scan(),
-            };
-
-            let mut scan_builder = match &self.projection {
-                Some(column_names) => scan_builder.select(column_names),
-                None => scan_builder.select_all(),
-            };
-            if let Some(pred) = &self.predicates {
-                scan_builder = scan_builder.with_filter(pred.clone());
-            }
-            let table_scan = scan_builder.build().map_err(df_err)?;
+            // Upstream builds the scan request; DFD only fans out its task stream.
+            let mut stream = self.source.tasks(0, Arc::clone(&ctx))?;
 
             // Fanout the FileScanTask stream across P * T output channels where:
             // - P is the number of output partitions per distributed task (`partition_count`)
@@ -254,14 +236,6 @@ impl WorkUnitFeedProvider for IcebergWorkUnitFeed {
             // be canceled. The lifetime of this `task` variable needs to leave as long as any of
             // the return streams of the `feed()` method.
             let task = SpawnedTask::spawn(async move {
-                let mut stream = match table_scan.plan_files().await {
-                    Ok(stream) => stream,
-                    Err(err) => {
-                        let _ = txs[0].send(Err(df_err(err)));
-                        return;
-                    }
-                };
-
                 // Workers own contiguous ranges of feed partitions. Visit workers first so
                 // a pruned scan with few files does not fill only the first worker's range.
                 // This routing assumes UnknownPartitioning, not hash or range partitioning.

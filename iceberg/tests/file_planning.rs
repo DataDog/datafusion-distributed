@@ -12,9 +12,10 @@ mod tests {
     use datafusion::execution::runtime_env::RuntimeEnvBuilder;
     use datafusion::physical_plan::collect;
     use datafusion_distributed::WorkUnitFeedProvider;
-    use datafusion_distributed_iceberg::{IcebergWorkUnitFeed, LazyIcebergDataSource};
+    use datafusion_distributed_iceberg::{FeedTaskSource, IcebergWorkUnitFeed};
     use datafusion_distributed_iceberg_test_tools::create_taxi_table;
     use futures::TryStreamExt;
+    use iceberg_datafusion::read::IcebergDataSource;
     use prost::Message;
 
     #[tokio::test]
@@ -22,14 +23,14 @@ mod tests {
         let lazy = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
-            .with_config_option("iceberg.column_stats_enabled", true)
+            .with_config_option("iceberg.execution.column_stats_enabled", true)
             .build()
             .await?;
         let eager = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
-            .with_config_option("iceberg.column_stats_enabled", true)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.column_stats_enabled", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .build()
             .await?;
         let query = "SELECT pickup_date, COUNT(*) AS trips FROM taxi \
@@ -59,7 +60,7 @@ mod tests {
                 .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
                 .with_table(create_taxi_table().await?)
                 .with_workers(2)
-                .with_config_option("iceberg.column_stats_enabled", true)
+                .with_config_option("iceberg.execution.column_stats_enabled", true)
                 .query(query)
                 .await?
                 .1,
@@ -67,8 +68,8 @@ mod tests {
                 .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
                 .with_table(create_taxi_table().await?)
                 .with_workers(2)
-                .with_config_option("iceberg.column_stats_enabled", true)
-                .with_config_option("iceberg.eager_file_planning", true)
+                .with_config_option("iceberg.execution.column_stats_enabled", true)
+                .with_config_option("iceberg.execution.eager_file_planning", true)
                 .query(query)
                 .await?
                 .1
@@ -81,7 +82,7 @@ mod tests {
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .build()
             .await?;
         let scan = harness.scan().await?;
@@ -105,7 +106,7 @@ mod tests {
         let eager = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .configure_session(|state| Ok(state.with_runtime_env(runtime)))?
             .build()
             .await?;
@@ -133,8 +134,9 @@ mod tests {
             .downcast_ref::<DataSourceExec>()
             .unwrap()
             .data_source()
-            .downcast_ref::<LazyIcebergDataSource>()
-            .unwrap()
+            .downcast_ref::<IcebergDataSource<FeedTaskSource>>()
+            .expect("lazy scans use the upstream source directly")
+            .task_source()
             .feed()
             .inner()
             .unwrap();

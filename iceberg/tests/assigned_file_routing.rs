@@ -12,8 +12,8 @@ mod tests {
     use datafusion_distributed::{
         DistributedExt, RouteTaskEvent, RouteTaskEventResponse, RouteTaskHandler, ok_or_some_err,
     };
-    use datafusion_distributed_iceberg::EagerIcebergDataSource;
     use datafusion_distributed_iceberg_test_tools::create_taxi_table;
+    use iceberg_datafusion::read::EagerIcebergDataSource;
 
     #[tokio::test]
     async fn routing_uses_the_files_assigned_to_each_task() -> Result<()> {
@@ -22,7 +22,7 @@ mod tests {
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
             .with_workers(3)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .configure_session(|state| {
                 state
                     .with_distributed_route_task_handler(routes.clone())
@@ -45,7 +45,7 @@ mod tests {
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(create_taxi_table().await?)
             .with_workers(3)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .configure_session(|state| {
                 state
                     .with_distributed_route_task_handler(routes.clone())

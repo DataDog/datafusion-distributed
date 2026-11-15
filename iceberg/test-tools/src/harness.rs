@@ -46,6 +46,11 @@ impl IcebergTestHarness {
         self.table.as_ref().expect("the harness has a table")
     }
 
+    /// The application session, e.g. to register an upstream programmatic provider.
+    pub fn context(&self) -> &SessionContext {
+        &self.ctx
+    }
+
     /// The session's state, e.g. to read its configuration.
     pub fn state(&self) -> SessionState {
         self.ctx.state()
@@ -152,7 +157,7 @@ impl IcebergTestHarnessBuilder {
         self
     }
 
-    /// Sets the coordinator's session option `key`, e.g. `iceberg.eager_file_planning`, to
+    /// Sets the coordinator's session option `key`, e.g. `iceberg.execution.eager_file_planning`, to
     /// `value`, e.g. `true`. Options are set after the session extensions run, so they can
     /// belong to a config extension one of them registers. Later values replace earlier
     /// ones for the same key.

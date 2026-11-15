@@ -10,12 +10,13 @@ mod tests {
     // `record_batch!` refers to `arrow_schema` by name.
     use datafusion::arrow::datatypes as arrow_schema;
     use datafusion_distributed::{DistributedExt, DistributedLeafExec};
-    use datafusion_distributed_iceberg::{EagerIcebergDataSource, IcebergExt};
+    use datafusion_distributed_iceberg::IcebergExt;
     use datafusion_distributed_iceberg_test_tools::{
         FixtureCatalog, FixtureTable, IcebergTestHarness,
     };
     use iceberg::TableIdent;
     use iceberg::spec::{NestedField, PrimitiveType, Schema, Type};
+    use iceberg_datafusion::read::EagerIcebergDataSource;
 
     #[tokio::test]
     async fn largest_files_balance_tasks() -> Result<(), Box<dyn Error>> {
@@ -23,7 +24,7 @@ mod tests {
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(table_of_files([[100_000, 90_000, 10_000, 5_000, 4_000, 3_000]]).await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .with_workers(2)
             .configure_session(|mut state| {
                 let session = state.config().get_or_insert_default();
@@ -50,7 +51,7 @@ mod tests {
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(table_of_files([[3_000, 4_000, 5_000, 10_000, 90_000, 100_000]]).await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .with_workers(2)
             .configure_session(|mut state| {
                 let session = state.config().get_or_insert_default();
@@ -77,7 +78,7 @@ mod tests {
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(table_of_files([[10_000; 4]]).await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .with_workers(2)
             .configure_session(|mut state| {
                 let session = state.config().get_or_insert_default();
@@ -105,7 +106,7 @@ mod tests {
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(table_of_files([[10_000], [10_000], [10_000], [10_000]]).await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .with_workers(2)
             .configure_session(|mut state| {
                 let session = state.config().get_or_insert_default();
@@ -127,12 +128,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_assignment_cycles_partitions_in_size_order() -> Result<(), Box<dyn Error>> {
+    async fn local_scan_keeps_upstream_round_robin_groups() -> Result<(), Box<dyn Error>> {
         // Each inner array is one commit, with one file per row count.
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(table_of_files([[3_000, 4_000, 5_000, 10_000, 90_000, 100_000]]).await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .configure_session(|mut state| {
                 let session = state.config().get_or_insert_default();
                 session.options_mut().execution.target_partitions = 2;
@@ -141,21 +142,37 @@ mod tests {
             .build()
             .await?;
         let plan = harness.scan().await?;
-        insta::assert_snapshot!(assignments(&plan)?, @r"
-        task 0: 2120470 bytes
-          partition 0: [1-00005.parquet (1003586 bytes), 1-00003.parquet (98128 bytes), 1-00001.parquet (38605 bytes)]
-          partition 1: [1-00004.parquet (902316 bytes), 1-00002.parquet (48732 bytes), 1-00000.parquet (29103 bytes)]
-        ");
+        let source = plan
+            .downcast_ref::<DataSourceExec>()
+            .unwrap()
+            .data_source()
+            .downcast_ref::<EagerIcebergDataSource>()
+            .unwrap();
+        assert_eq!(source.output_partitioning().partition_count(), 2);
+        let files: Vec<_> = source.planned_files().collect();
+        // Compare against upstream's retained-file order, not manifest delivery
+        // order or a DFD-specific size ordering.
+        for (partition, positions) in [vec![0, 2, 4], vec![1, 3, 5]].into_iter().enumerate() {
+            let actual: Vec<_> = source
+                .planned_partition_files(partition)?
+                .map(|file| file.data_file_path())
+                .collect();
+            let expected: Vec<_> = positions
+                .into_iter()
+                .map(|position| files[position].data_file_path())
+                .collect();
+            assert_eq!(actual, expected, "partition {partition}");
+        }
         Ok(())
     }
 
     #[tokio::test]
-    async fn empty_scan_keeps_local_partitions() -> Result<(), Box<dyn Error>> {
+    async fn empty_scan_keeps_upstream_single_partition() -> Result<(), Box<dyn Error>> {
         // Each inner array is one commit, with one file per row count.
         let harness = IcebergTestHarness::builder()
             .with_session_extension(|state| state.with_iceberg_integration(Default::default()))
             .with_table(table_of_files([[]]).await?)
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .configure_session(|mut state| {
                 let session = state.config().get_or_insert_default();
                 session.options_mut().execution.target_partitions = 2;
@@ -167,7 +184,6 @@ mod tests {
         insta::assert_snapshot!(assignments(&plan)?, @"
         task 0: 0 bytes
           partition 0: []
-          partition 1: []
         ");
         Ok(())
     }
@@ -198,7 +214,7 @@ mod tests {
             writeln!(output, "task {task}: {bytes} bytes")?;
             for partition in 0..source.output_partitioning().partition_count() {
                 let files = source
-                    .planned_partition_tasks(partition)?
+                    .planned_partition_files(partition)?
                     .map(|file| {
                         format!(
                             "{} ({} bytes)",

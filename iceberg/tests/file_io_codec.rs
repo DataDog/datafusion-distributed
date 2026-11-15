@@ -19,7 +19,7 @@ mod tests {
             .with_session_extension(move |state| install_hook(state, session_hook.clone()))
             .with_table(create_taxi_table().await?)
             .with_table_option("fixture.storage", "original")
-            .with_config_option("iceberg.eager_file_planning", false)
+            .with_config_option("iceberg.execution.eager_file_planning", false)
             .with_workers(2)
             .configure_session(|state| {
                 state.with_distributed_file_scan_config_bytes_per_partition(1)
@@ -46,7 +46,7 @@ mod tests {
             .with_session_extension(move |state| install_hook(state, session_hook.clone()))
             .with_table(create_taxi_table().await?)
             .with_table_option("fixture.storage", "original")
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .with_workers(2)
             .configure_session(|state| {
                 state.with_distributed_file_scan_config_bytes_per_partition(1)
@@ -75,7 +75,7 @@ mod tests {
             .with_session_extension(move |state| install_hook(state, hook.clone()))
             .with_table(create_taxi_table().await?)
             .with_table_option("fixture.storage", "original")
-            .with_config_option("iceberg.eager_file_planning", true)
+            .with_config_option("iceberg.execution.eager_file_planning", true)
             .build()
             .await?;
 
