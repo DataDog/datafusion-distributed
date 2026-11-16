@@ -30,9 +30,20 @@ pub(crate) fn set_passthrough_headers(
     Ok(())
 }
 
-/// Gets passthrough headers from a SessionConfig extension.
-/// Returns an empty HeaderMap if none are set.
-pub(crate) fn get_passthrough_headers(cfg: &SessionConfig) -> HeaderMap {
+/// Returns a copy of the worker passthrough headers, or an empty map if unset.
+///
+/// Read, modify, then write the map to preserve other configured headers:
+///
+/// ```
+/// # use datafusion::prelude::SessionConfig;
+/// use datafusion_distributed::{DistributedExt, get_passthrough_headers};
+/// # let mut config = SessionConfig::new();
+/// let mut headers = get_passthrough_headers(&config);
+/// headers.insert("x-query-context", "example".parse()?);
+/// config.set_distributed_passthrough_headers(headers)?;
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn get_passthrough_headers(cfg: &SessionConfig) -> HeaderMap {
     cfg.get_extension::<PassthroughHeaders>()
         .map(|h| h.0.clone())
         .unwrap_or_default()
