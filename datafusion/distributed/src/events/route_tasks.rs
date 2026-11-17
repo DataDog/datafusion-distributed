@@ -186,6 +186,7 @@ mod tests {
                 task_number: 0,
             },
             task_count: 1,
+            stage_plan: &plan,
             task_specialized_plan: &plan,
             dialer: &dialer,
         };
