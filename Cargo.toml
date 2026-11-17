@@ -21,3 +21,11 @@ datafusion-proto = { git = "https://github.com/apache/datafusion.git", rev = "16
 [workspace.lints.clippy]
 disallowed_types = "deny"
 disallowed-methods = "deny"
+
+# datafusion-iceberg pins apache/iceberg-rust at an older Arrow 60 revision. Resolve it to the
+# same revision as this workspace (apache/iceberg-rust 13f84f9: that revision plus FileScanTask
+# column statistics, #3424) so FileScanTask is one type. Drop this once datafusion-iceberg
+# depends on a revision with both.
+[patch."https://github.com/apache/iceberg-rust.git"]
+iceberg = { git = "https://github.com/DataDog/iceberg-rust.git", rev = "13f84f93f1a09619f473b788b2a88ef1da0c7102" }
+iceberg-storage-opendal = { git = "https://github.com/DataDog/iceberg-rust.git", rev = "13f84f93f1a09619f473b788b2a88ef1da0c7102" }

@@ -12,11 +12,13 @@ async-trait = "0.1"
 bytes = "1"
 datafusion = { workspace = true, features = ["sql"] }
 datafusion-proto = { workspace = true }
-# Match datafusion-iceberg's iceberg-rust revision so FileScanTask has one shared type.
+# apache/iceberg-rust 13f84f9: Arrow 60 plus FileScanTask column statistics (#3424). The commit is
+# fetched from DataDog/iceberg-rust, which mirrors upstream; the workspace [patch] points
+# datafusion-iceberg at it too so FileScanTask is one type.
 iceberg-datafusion = { git = "https://github.com/apache/datafusion-iceberg.git", rev = "5398be196e47ef42543f6e9c72d15cad898e5143" }
 futures = "0.3"
-iceberg = { git = "https://github.com/apache/iceberg-rust.git", rev = "0d5eb123495f765ea151e78c8964919d554d4b98" }
-iceberg-storage-opendal = { git = "https://github.com/apache/iceberg-rust.git", rev = "0d5eb123495f765ea151e78c8964919d554d4b98", default-features = false, features = ["opendal-fs", "opendal-s3", "opendal-gcs"] }
+iceberg = { git = "https://github.com/DataDog/iceberg-rust.git", rev = "13f84f93f1a09619f473b788b2a88ef1da0c7102" }
+iceberg-storage-opendal = { git = "https://github.com/DataDog/iceberg-rust.git", rev = "13f84f93f1a09619f473b788b2a88ef1da0c7102", default-features = false, features = ["opendal-fs", "opendal-s3", "opendal-gcs"] }
 datafusion-distributed = { path = "../distributed", features = ["sql"] }
 delegate = "0.13"
 prost = "0.14.1"

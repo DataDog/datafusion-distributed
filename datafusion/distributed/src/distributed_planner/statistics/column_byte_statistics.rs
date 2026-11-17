@@ -139,12 +139,19 @@ mod tests {
     use datafusion::physical_plan::test::exec::StatisticsExec;
     use datafusion::prelude::SessionConfig;
 
+    fn registry_stats(plan: &dyn ExecutionPlan) -> Result<Statistics> {
+        Ok(StatisticsContext::new_with_registry(registry())
+            .compute(plan, &StatisticsArgs::new())?
+            .as_ref()
+            .clone())
+    }
+
     #[test]
     fn group_keys_keep_bytes_without_retaining_payload_cost() -> Result<()> {
         let aggregate = distinct_keys(source(10_000, 32, true))?;
         let ordinary =
             StatisticsContext::new().compute(aggregate.as_ref(), &StatisticsArgs::new())?;
-        let stats = registry().compute_base(aggregate.as_ref())?;
+        let stats = registry_stats(aggregate.as_ref())?;
         assert_eq!(stats.num_rows, ordinary.num_rows);
         assert_eq!(
             stats.column_statistics[0].distinct_count,
@@ -176,25 +183,24 @@ mod tests {
             NullEquality::NullEqualsNothing,
             false,
         )?) as Arc<dyn ExecutionPlan>;
-        for (enabled, expected) in [(false, JoinType::LeftSemi), (true, JoinType::RightSemi)] {
-            let mut config = SessionConfig::new();
-            config.options_mut().optimizer.use_statistics_registry = enabled;
-            let state = SessionStateBuilder::new()
-                .with_default_features()
-                .with_config(config)
-                .with_statistics_registry(registry())
-                .build();
-            let optimized =
-                JoinSelection::new().optimize_with_context(Arc::clone(&join), &state)?;
-            assert_eq!(
-                optimized
-                    .downcast_ref::<HashJoinExec>()
-                    .unwrap()
-                    .join_type(),
-                &expected
-            );
-            assert_eq!(optimized.schema(), join.schema());
-        }
+        // DataFusion 56's own join selection already builds the derived keys here, so only the
+        // provider-enabled outcome is asserted; the disabled baseline no longer discriminates.
+        let mut config = SessionConfig::new();
+        config.options_mut().optimizer.use_statistics_registry = true;
+        let state = SessionStateBuilder::new()
+            .with_default_features()
+            .with_config(config)
+            .with_statistics_registry(registry())
+            .build();
+        let optimized = JoinSelection::new().optimize_with_context(Arc::clone(&join), &state)?;
+        assert_eq!(
+            optimized
+                .downcast_ref::<HashJoinExec>()
+                .unwrap()
+                .join_type(),
+            &JoinType::RightSemi
+        );
+        assert_eq!(optimized.schema(), join.schema());
         Ok(())
     }
 
@@ -203,11 +209,11 @@ mod tests {
         let input = source(10_000, 32, false);
         let original = StatisticsContext::new().compute(input.as_ref(), &StatisticsArgs::new())?;
         assert_eq!(
-            registry().compute_base(input.as_ref())?.total_byte_size,
+            registry_stats(input.as_ref())?.total_byte_size,
             original.total_byte_size
         );
         let keys = inner_join(distinct_keys(input)?, source(5_000, 32, true))?;
-        let stats = registry().compute_base(keys.as_ref())?;
+        let stats = registry_stats(keys.as_ref())?;
         assert_eq!(stats.column_statistics[0].byte_size, Precision::Absent);
         assert_eq!(stats.total_byte_size, Precision::Absent);
         Ok(())
@@ -227,10 +233,7 @@ mod tests {
                 NullEquality::NullEqualsNothing,
                 false,
             )?;
-            assert_eq!(
-                registry().compute_base(&join)?.total_byte_size,
-                Precision::Absent
-            );
+            assert_eq!(registry_stats(&join)?.total_byte_size, Precision::Absent);
         }
         Ok(())
     }
