@@ -1,16 +1,149 @@
 use crate::common::df_err;
 use datafusion::common::runtime::JoinSet;
 use datafusion::common::stats::Precision;
-use datafusion::common::{ColumnStatistics, HashMap, Result};
+use datafusion::common::{ColumnStatistics, HashMap, Result, exec_err};
 use datafusion::error::DataFusionError;
 use datafusion::scalar::ScalarValue;
 use iceberg::puffin::APACHE_DATASKETCHES_THETA_V1;
 use iceberg::spec::{
-    DataFile, Datum, ManifestContentType, ManifestList, PrimitiveLiteral, PrimitiveType,
-    SnapshotRef,
+    DataFile, Datum, ManifestContentType, ManifestList, NestedFieldRef, PrimitiveLiteral,
+    PrimitiveType, Schema, SnapshotRef, Type,
 };
 use iceberg::table::Table;
 use std::sync::Arc;
+
+use iceberg::scan::{FileScanTask, FileScanTaskColumnStats};
+
+/// Names of the primitive leaf columns under `fields`, in schema-dotted form. Passed to
+/// `TableScanBuilder::with_column_stats` so each planned `FileScanTask` carries the file's
+/// metrics for exactly the columns these statistics cover. Leaves that are not primitive
+/// (variants) have no file metrics and are skipped.
+pub(crate) fn column_stats_names(
+    schema: &Schema,
+    fields: &[NestedFieldRef],
+) -> Result<Vec<String>> {
+    let mut names = vec![];
+    for field in fields {
+        let mut leaves = vec![];
+        leaves_of(field, &mut leaves);
+        for leaf in leaves {
+            if !matches!(leaf.field_type.as_ref(), Type::Primitive(_)) {
+                continue;
+            }
+            let Some(name) = schema.name_by_field_id(leaf.id) else {
+                return exec_err!("Iceberg column {} has no name in the scan schema", leaf.id);
+            };
+            names.push(name.to_string());
+        }
+    }
+    Ok(names)
+}
+
+/// Selected-file metrics, with snapshot NDV retained only as an inexact fallback.
+/// Metrics come from the `FileScanTask::column_stats` that the scan retained while
+/// planning (see [`column_stats_names`]), so no manifest is read a second time.
+pub(crate) fn selected_column_statistics(
+    table: &Table,
+    snapshot: &SnapshotRef,
+    fields: &[NestedFieldRef],
+    files: &[FileScanTask],
+    may_filter_rows: bool,
+) -> Result<Vec<ColumnStatistics>> {
+    if files.is_empty() || fields.is_empty() {
+        return Ok(vec![
+            ColumnStatistics {
+                null_count: Precision::Exact(0),
+                distinct_count: Precision::Exact(0),
+                byte_size: Precision::Inexact(0),
+                ..ColumnStatistics::new_unknown()
+            };
+            fields.len()
+        ]);
+    }
+    if files
+        .iter()
+        .any(|task| task.start() != 0 || task.length() != task.file_size_in_bytes())
+    {
+        // Full-file metrics cannot describe a byte-range task.
+        return Ok(vec![ColumnStatistics::new_unknown(); fields.len()]);
+    }
+    let field_ids: Vec<_> = fields
+        .iter()
+        .map(|field| {
+            let mut ids = vec![];
+            leaf_ids(field, &mut ids);
+            ids
+        })
+        .collect();
+    let mut statistics = vec![None; fields.len()];
+    for task in files {
+        let Some(file) = task.column_stats() else {
+            return exec_err!(
+                "Planned Iceberg file {} carries no column statistics",
+                task.data_file_path()
+            );
+        };
+        for ((acc, field), ids) in statistics.iter_mut().zip(fields).zip(&field_ids) {
+            // Leaf metrics cannot describe a parent struct/list/map's value or null count.
+            let mut next = if matches!(field.field_type.as_ref(), Type::Primitive(_)) {
+                task_col_stats(file, field.id)
+            } else {
+                ColumnStatistics::new_unknown()
+            };
+            next.byte_size = ids
+                .iter()
+                .try_fold(0_usize, |total, id| {
+                    let size = usize::try_from(*file.column_sizes().get(id)?).ok()?;
+                    total.checked_add(size)
+                })
+                .map(Precision::Inexact)
+                .unwrap_or(Precision::Absent);
+            *acc = Some(merge_col_stats(acc.take(), next));
+        }
+    }
+    let rows = files.iter().try_fold(0_usize, |rows, task| {
+        rows.checked_add(usize::try_from(task.record_count()?).ok()?)
+    });
+    let ndvs = ndv_from_metadata(table, snapshot.snapshot_id());
+    Ok(statistics
+        .into_iter()
+        .zip(fields)
+        .map(|(stats, field)| {
+            let mut stats = stats.unwrap_or_else(ColumnStatistics::new_unknown);
+            if may_filter_rows {
+                stats.null_count = stats.null_count.to_inexact();
+            }
+            // Snapshot sketches cannot be restricted to selected files. Retain their
+            // estimate, capped by the selected rows, without claiming exactness.
+            if let Some(&ndv) = ndvs.get(&field.id) {
+                stats.distinct_count = Precision::Inexact(rows.map_or(ndv, |rows| ndv.min(rows)));
+            }
+            stats
+        })
+        .collect())
+}
+
+fn leaf_ids(field: &NestedFieldRef, ids: &mut Vec<i32>) {
+    let mut leaves = vec![];
+    leaves_of(field, &mut leaves);
+    ids.extend(leaves.iter().map(|leaf| leaf.id));
+}
+
+fn leaves_of<'a>(field: &'a NestedFieldRef, leaves: &mut Vec<&'a NestedFieldRef>) {
+    match field.field_type.as_ref() {
+        Type::Primitive(_) | Type::Variant(_) => leaves.push(field),
+        Type::Struct(fields) => {
+            for field in fields.fields() {
+                leaves_of(field, leaves);
+            }
+        }
+        Type::List(list) => leaves_of(&list.element_field, leaves),
+        Type::Map(map) => {
+            leaves_of(&map.key_field, leaves);
+            leaves_of(&map.value_field, leaves);
+        }
+    }
+}
 
 /// Getting number of distinct values for columns in a table
 ///
@@ -139,7 +272,13 @@ fn merge_col_stats(acc: Option<ColumnStatistics>, next: ColumnStatistics) -> Col
             null_count: acc.null_count.add(&next.null_count),
             min_value: acc.min_value.min(&next.min_value),
             max_value: acc.max_value.max(&next.max_value),
-            byte_size: acc.byte_size.add(&next.byte_size),
+            byte_size: acc
+                .byte_size
+                .get_value()
+                .zip(next.byte_size.get_value())
+                .and_then(|(a, b)| a.checked_add(*b))
+                .map(Precision::Inexact)
+                .unwrap_or(Precision::Absent),
             sum_value: Precision::Absent,
             distinct_count: Precision::Absent,
         },
@@ -147,28 +286,43 @@ fn merge_col_stats(acc: Option<ColumnStatistics>, next: ColumnStatistics) -> Col
 }
 
 fn data_file_col_stats(df: &DataFile, id: i32) -> ColumnStatistics {
+    file_col_stats(
+        df.null_value_counts().get(&id).copied(),
+        df.lower_bounds().get(&id),
+        df.upper_bounds().get(&id),
+        df.column_sizes().get(&id).copied(),
+    )
+}
+
+fn task_col_stats(stats: &FileScanTaskColumnStats, id: i32) -> ColumnStatistics {
+    file_col_stats(
+        stats.null_value_counts().get(&id).copied(),
+        stats.lower_bounds().get(&id),
+        stats.upper_bounds().get(&id),
+        stats.column_sizes().get(&id).copied(),
+    )
+}
+
+fn file_col_stats(
+    null_count: Option<u64>,
+    lower_bound: Option<&Datum>,
+    upper_bound: Option<&Datum>,
+    column_size: Option<u64>,
+) -> ColumnStatistics {
     ColumnStatistics {
-        null_count: df
-            .null_value_counts()
-            .get(&id)
-            .map(|n| Precision::Exact(*n as usize))
+        null_count: null_count
+            .map(|n| Precision::Exact(n as usize))
             .unwrap_or(Precision::Absent),
-        min_value: df
-            .lower_bounds()
-            .get(&id)
+        min_value: lower_bound
             .and_then(datum_to_scalar)
             .map(Precision::Inexact)
             .unwrap_or(Precision::Absent),
-        max_value: df
-            .upper_bounds()
-            .get(&id)
+        max_value: upper_bound
             .and_then(datum_to_scalar)
             .map(Precision::Inexact)
             .unwrap_or(Precision::Absent),
-        byte_size: df
-            .column_sizes()
-            .get(&id)
-            .map(|n| Precision::Inexact(*n as usize))
+        byte_size: column_size
+            .map(|n| Precision::Inexact(n as usize))
             .unwrap_or(Precision::Absent),
         sum_value: Precision::Absent,
         distinct_count: Precision::Absent,

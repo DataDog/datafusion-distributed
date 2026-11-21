@@ -1,3 +1,4 @@
+use crate::common::scan_config::stats_from_snapshot;
 use std::num::NonZeroUsize;
 
 use datafusion::common::{Result, config_datafusion_err};
@@ -14,14 +15,21 @@ pub fn iceberg_desired_task_count(
     ev: DesiredTaskCountEvent,
 ) -> Option<Result<DesiredTaskCountEventResponse>> {
     let node = ev.plan.downcast_ref::<DataSourceExec>()?.data_source();
-    if !node.is::<LazyIcebergDataSource>() && !node.is::<EagerIcebergDataSource>() {
-        return None;
-    }
-    let statistics = match node.partition_statistics(None) {
-        Ok(statistics) => statistics,
-        Err(error) => return Some(Err(error)),
-    };
-    let total_bytes = *statistics.total_byte_size.get_value()?;
+    // Relation statistics may describe projected columns; parallelism uses whole-file work.
+    let (total_bytes, file_limit) =
+        if let Some(source) = node.downcast_ref::<EagerIcebergDataSource>() {
+            let (count, bytes) = source.file_count_and_bytes()?;
+            (bytes, Some(count))
+        } else {
+            let source = node.downcast_ref::<LazyIcebergDataSource>()?;
+            source.feed.inner()?;
+            let statistics =
+                match stats_from_snapshot(source.table_snapshot.clone(), &source.scan.schema) {
+                    Ok(statistics) => statistics,
+                    Err(error) => return Some(Err(error)),
+                };
+            (*statistics.total_byte_size.get_value()?, None)
+        };
     let config = DistributedConfig::from_session_config(ev.session_config).ok()?;
 
     Some(
@@ -31,11 +39,7 @@ pub fn iceberg_desired_task_count(
             ev.session_config.target_partitions(),
         )
         .map(|count| {
-            let count = node
-                .downcast_ref::<EagerIcebergDataSource>()
-                .map_or(count, |source| {
-                    count.min(source.planned_files().count() as f64)
-                });
+            let count = file_limit.map_or(count, |files| count.min(files as f64));
             DesiredTaskCountEventResponse::soft(count)
         }),
     )
