@@ -4064,7 +4064,7 @@ dependencies = [
 [[package]]
 name = "iceberg"
 version = "0.10.1"
-source = "git+https://github.com/DataDog/iceberg-rust?rev=9354b42ad8c28b9f3df2ae4c3e4931beab0be12b#9354b42ad8c28b9f3df2ae4c3e4931beab0be12b"
+source = "git+https://github.com/DataDog/iceberg-rust?rev=7fda030197a61057422b12ca4cf2cc783a5607f0#7fda030197a61057422b12ca4cf2cc783a5607f0"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -4091,6 +4091,7 @@ dependencies = [
  "fastnum",
  "flate2",
  "fnv",
+ "foldhash 0.2.0",
  "form_urlencoded",
  "futures",
  "iceberg-property-macro",
@@ -4142,7 +4143,7 @@ dependencies = [
 [[package]]
 name = "iceberg-property-macro"
 version = "0.10.1"
-source = "git+https://github.com/DataDog/iceberg-rust?rev=9354b42ad8c28b9f3df2ae4c3e4931beab0be12b#9354b42ad8c28b9f3df2ae4c3e4931beab0be12b"
+source = "git+https://github.com/DataDog/iceberg-rust?rev=7fda030197a61057422b12ca4cf2cc783a5607f0#7fda030197a61057422b12ca4cf2cc783a5607f0"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4152,7 +4153,7 @@ dependencies = [
 [[package]]
 name = "iceberg-storage-opendal"
 version = "0.10.1"
-source = "git+https://github.com/DataDog/iceberg-rust?rev=9354b42ad8c28b9f3df2ae4c3e4931beab0be12b#9354b42ad8c28b9f3df2ae4c3e4931beab0be12b"
+source = "git+https://github.com/DataDog/iceberg-rust?rev=7fda030197a61057422b12ca4cf2cc783a5607f0#7fda030197a61057422b12ca4cf2cc783a5607f0"
 dependencies = [
  "anyhow",
  "async-trait",

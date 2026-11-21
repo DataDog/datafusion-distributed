@@ -15,7 +15,7 @@ datafusion = { workspace = true, features = ["parquet", "sql"] }
 datafusion-distributed = { path = "../distributed", features = ["integration"] }
 datafusion-proto = { workspace = true }
 # Match datafusion-distributed-iceberg's iceberg-rust source so tables share one type.
-iceberg = { git = "https://github.com/DataDog/iceberg-rust", rev = "9354b42ad8c28b9f3df2ae4c3e4931beab0be12b" }
+iceberg = { git = "https://github.com/DataDog/iceberg-rust", rev = "7fda030197a61057422b12ca4cf2cc783a5607f0" }
 rand = { version = "0.10", default-features = false, features = ["alloc"] }
 rand_pcg = "0.10"
 tempfile = "3.18"

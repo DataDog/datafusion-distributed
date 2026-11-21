@@ -20,8 +20,8 @@ datafusion-proto = { version = "55", default-features = false }
 
 # datafusion-iceberg depends on apache/iceberg-rust; use the same source so FileScanTask is one type.
 [patch."https://github.com/apache/iceberg-rust"]
-iceberg = { git = "https://github.com/DataDog/iceberg-rust", rev = "9354b42ad8c28b9f3df2ae4c3e4931beab0be12b" }
-iceberg-storage-opendal = { git = "https://github.com/DataDog/iceberg-rust", rev = "9354b42ad8c28b9f3df2ae4c3e4931beab0be12b" }
+iceberg = { git = "https://github.com/DataDog/iceberg-rust", rev = "7fda030197a61057422b12ca4cf2cc783a5607f0" }
+iceberg-storage-opendal = { git = "https://github.com/DataDog/iceberg-rust", rev = "7fda030197a61057422b12ca4cf2cc783a5607f0" }
 
 [workspace.lints.clippy]
 disallowed_types = "deny"
