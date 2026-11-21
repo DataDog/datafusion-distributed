@@ -118,6 +118,14 @@ file list (a few small per-column maps per file) and counted by the planning mem
 reservation. iceberg-rust has no way to drop them from a planned task, which would
 avoid that cost.
 
+The Datadog integration also exports `datafusion_distributed::ColumnByteStatisticsProvider`.
+To preserve available column-byte estimates through grouping keys and inner joins,
+register it with `SessionStateBuilder::with_statistics_registry` using
+`StatisticsRegistry::with_providers(vec![Arc::new(ColumnByteStatisticsProvider)])`,
+and enable `datafusion.optimizer.use_statistics_registry`. The provider retains the
+operators' normal row-count estimates; compressed column bytes remain a heuristic,
+not a measurement of join memory. It is not registered automatically by Iceberg.
+
 ```bash
 cargo test -p datafusion-distributed-iceberg -p datafusion-distributed-iceberg-test-tools
 ```
