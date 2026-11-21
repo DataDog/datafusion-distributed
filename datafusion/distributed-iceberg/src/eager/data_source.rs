@@ -90,6 +90,18 @@ impl EagerIcebergDataSource {
             .map(|index| &self.files.tasks()[index])
     }
 
+    pub(crate) fn file_count_and_bytes(&self) -> Option<(usize, usize)> {
+        let mut count = 0;
+        let mut bytes = 0usize;
+        for group in self.partitions.iter() {
+            count += group.len();
+            for &index in group {
+                bytes = bytes.checked_add(self.files.tasks()[index].length().try_into().ok()?)?;
+            }
+        }
+        Some((count, bytes))
+    }
+
     fn file_indices(&self) -> Vec<usize> {
         let mut indices: Vec<_> = self.partitions.iter().flatten().copied().collect();
         indices.sort_unstable();
